@@ -1,6 +1,7 @@
 const NVIDIA_BASE = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_MODEL = "google/gemma-4-31b-it";
 const NVIDIA_KEY = "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";
+const CORS_PROXY = "https://corsproxy.io/?";
 export const PRESETS = {
 nvidia: { url: NVIDIA_BASE, model: NVIDIA_MODEL, key: NVIDIA_KEY },
 openai: { url: "https://api.openai.com/v1", model: "gpt-3.5-turbo" },
@@ -9,8 +10,10 @@ groq: { url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" 
 together: { url: "https://api.together.xyz/v1", model: "meta-llama/Llama-3-70b-chat-hf" },
 ollama: { url: "http://localhost:11434/v1", model: "llama3" }
 };
-export function createChat(baseUrl, apiKey, model, systemPrompt) {
-const url = baseUrl.replace(/\/+$/, "") + "/chat/completions";
+export function createChat(baseUrl, apiKey, model, systemPrompt, corsProxy) {
+const proxy = corsProxy === false ? "" : (corsProxy || CORS_PROXY);
+const targetUrl = baseUrl.replace(/\/+$/, "") + "/chat/completions";
+const url = proxy ? proxy + encodeURIComponent(targetUrl) : targetUrl;
 let conversation = [];
 return {
 async send(userText) {
