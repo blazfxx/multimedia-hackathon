@@ -31,15 +31,15 @@
 <label>Base URL:<br><input type="text" id="base-url" size="60" value="https://integrate.api.nvidia.com/v1"></label><br><br>
 <label>API Key:<br><input type="password" id="api-key" size="60" value="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"></label><br><br>
 <label>Model:<br><input type="text" id="model" size="60" value="google/gemma-4-31b-it"></label><br><br>
-<label>System Prompt:<br><input type="text" id="sys-prompt" size="60" value="You are a helpful assistant."></label><br><br>
+
 <div id="chat-messages" style="border:1px solid #ccc;padding:8px;max-height:300px;overflow-y:auto;margin-bottom:8px"></div>
 <input type="text" id="chat-input" size="60" placeholder="Type a message...">
 <button id="send-btn">Send</button>
 <button onclick="resetChat()">Reset</button>
 <p id="c-status"></p>
 <script type="module">
-import { transcribeAudio, saveTranscription, loadTranscriptions, deleteTranscription } from "./js/transcribe.js";
-import { PRESETS, createChat } from "./js/chat.js";
+import { transcribeAudio, saveTranscription, loadTranscriptions, deleteTranscription } from "./js/transcribe.js?v=2";
+import { PRESETS, createChat } from "./js/chat.js?v=2";
 window.applyPreset = (name) => {
 const p = PRESETS[name];
 if (!p) return;
@@ -102,7 +102,7 @@ chat = createChat(
 document.getElementById("base-url").value,
 document.getElementById("api-key").value,
 document.getElementById("model").value,
-document.getElementById("sys-prompt").value
+"You are a helpful assistant."
 );
 }
 return chat;
