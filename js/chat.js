@@ -1,5 +1,5 @@
 const NVIDIA_BASE = "https://integrate.api.nvidia.com/v1";
-const NVIDIA_MODEL = "google/gemma-4-31b-it";
+const NVIDIA_MODEL = "meta/llama-3.1-8b-instruct";
 const NVIDIA_KEY = "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";
 const CORS_PROXY = "https://corsproxy.io/?";
 
@@ -8,33 +8,57 @@ export function createChat() {
   const url = CORS_PROXY + encodeURIComponent(targetUrl);
   let conversation = [];
   return {
-    async send(userText) {
+    async send(userText, onToken) {
       conversation.push({ role: "user", content: userText });
       const messages = [
         { role: "system", content: "You are a helpful assistant. Be concise." },
         ...conversation
       ];
+      const body = {
+        model: NVIDIA_MODEL,
+        messages,
+        stream: true,
+        max_tokens: 512,
+        temperature: 0.7,
+        top_p: 0.9
+      };
       const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${NVIDIA_KEY}`
         },
-        body: JSON.stringify({
-          model: NVIDIA_MODEL,
-          messages,
-          stream: false,
-          max_tokens: 512,
-          temperature: 0.7,
-          top_p: 0.9
-        })
+        body: JSON.stringify(body)
       });
       if (!res.ok) {
         const err = await res.text();
         throw new Error(`HTTP ${res.status}: ${err}`);
       }
-      const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content || JSON.stringify(data);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let reply = "";
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") continue;
+          try {
+            const json = JSON.parse(data);
+            const token = json.choices?.[0]?.delta?.content;
+            if (token) {
+              reply += token;
+              if (onToken) onToken(token);
+            }
+          } catch {}
+        }
+      }
       conversation.push({ role: "assistant", content: reply });
       return reply;
     },

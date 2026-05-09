@@ -5,46 +5,123 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Demo</title>
 <style>
-body { font-family: sans-serif; max-width: 640px; margin: 0 auto; padding: 16px; }
-#chat-messages { border: 1px solid #ccc; padding: 8px; height: 300px; overflow-y: auto; margin-bottom: 8px; }
+body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 16px; }
+section { margin-bottom: 24px; }
+h2 { margin-bottom: 8px; }
+#transcript-results { border: 1px solid #ccc; padding: 8px; min-height: 60px; max-height: 200px; overflow-y: auto; margin-bottom: 8px; white-space: pre-wrap; }
+#transcript-results div { margin-bottom: 4px; }
+#chat-messages { border: 1px solid #ccc; padding: 8px; height: 250px; overflow-y: auto; margin-bottom: 8px; }
 #chat-messages div { margin-bottom: 6px; }
 #chat-input { width: calc(100% - 60px); }
 #rec-btn { margin-left: 4px; }
+button { margin-right: 4px; }
+p { margin: 4px 0; }
 </style>
 </head>
 <body>
 <h1>AI Demo</h1>
-<div id="chat-messages"></div>
-<div style="display:flex;align-items:center">
-  <input type="text" id="chat-input" placeholder="Type a message...">
-  <button id="rec-btn" title="Record voice">&#127908;</button>
-</div>
-<button id="send-btn">Send</button>
-<button id="reset-btn">Reset</button>
-<p id="status"></p>
+
+<section>
+  <h2>Transcription</h2>
+  <div id="transcript-results"></div>
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
+    <button id="rec-btn" title="Record voice">&#127908;</button>
+    <button id="clear-trans-btn">Clear</button>
+  </div>
+  <p id="trans-status"></p>
+</section>
+
+<hr>
+
+<section>
+  <h2>Chat</h2>
+  <div id="chat-messages"></div>
+  <div style="display:flex;align-items:center">
+    <input type="text" id="chat-input" placeholder="Type a message...">
+  </div>
+  <div style="margin-top:6px">
+    <button id="send-btn">Send</button>
+    <button id="reset-btn">Reset</button>
+  </div>
+  <p id="chat-status"></p>
+</section>
+
 <script type="module">
-import { isSupported, listen, saveTranscription, loadTranscriptions, deleteTranscription } from "./js/transcribe.js?v=4";
-import { createChat } from "./js/chat.js?v=4";
+import { isSpeechSupported, listen, transcribeFile, saveTranscription, loadTranscriptions, deleteTranscription } from "./js/transcribe.js?v=5";
+import { createChat } from "./js/chat.js?v=5";
+
+const audioFile = document.getElementById("audio-file");
+const recBtn = document.getElementById("rec-btn");
+const clearTransBtn = document.getElementById("clear-trans-btn");
+const transStatus = document.getElementById("trans-status");
+const transcriptResults = document.getElementById("transcript-results");
 
 const chatInput = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
 const resetBtn = document.getElementById("reset-btn");
-const recBtn = document.getElementById("rec-btn");
-const status = document.getElementById("status");
+const chatStatus = document.getElementById("chat-status");
 const chatMessages = document.getElementById("chat-messages");
 
 let chat = createChat();
 
-if (!isSupported()) {
+if (!isSpeechSupported()) {
   recBtn.disabled = true;
   recBtn.title = "Speech Recognition not supported (use Chrome)";
 }
 
+loadTranscriptions().forEach(t => addTranscript(t.text, t.filename));
+
+function addTranscript(text, source) {
+  const div = document.createElement("div");
+  div.textContent = `[${source}] ${text}`;
+  transcriptResults.appendChild(div);
+  transcriptResults.scrollTop = transcriptResults.scrollHeight;
+}
+
+audioFile.addEventListener("change", async () => {
+  const file = audioFile.files[0];
+  if (!file) return;
+  transStatus.textContent = "Transcribing file...";
+  audioFile.disabled = true;
+  try {
+    const text = await transcribeFile(file);
+    addTranscript(text, file.name);
+    saveTranscription(file.name, text);
+    transStatus.textContent = "";
+  } catch (err) {
+    transStatus.textContent = err.message;
+  }
+  audioFile.disabled = false;
+  audioFile.value = "";
+});
+
+recBtn.addEventListener("click", async () => {
+  recBtn.disabled = true;
+  transStatus.textContent = "Listening...";
+  try {
+    const text = await listen();
+    addTranscript(text, "mic");
+    saveTranscription("mic", text);
+    transStatus.textContent = "";
+  } catch (err) {
+    transStatus.textContent = err.message;
+  }
+  recBtn.disabled = false;
+});
+
+clearTransBtn.addEventListener("click", () => {
+  transcriptResults.innerHTML = "";
+  localStorage.removeItem("transcriptions");
+});
+
 function addMsg(role, content) {
   const div = document.createElement("div");
-  div.innerHTML = "<strong>" + role + ":</strong> " + content;
+  div.innerHTML = "<strong>" + role + ":</strong> ";
+  div.querySelector("strong").after(document.createTextNode(content));
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+  return div;
 }
 
 async function sendMessage(text) {
@@ -52,14 +129,18 @@ async function sendMessage(text) {
   addMsg("you", text);
   chatInput.value = "";
   sendBtn.disabled = true;
-  status.textContent = "Thinking...";
+  chatStatus.textContent = "Thinking...";
+  const replyDiv = addMsg("assistant", "");
   try {
-    const reply = await chat.send(text);
-    addMsg("assistant", reply);
+    await chat.send(text, (token) => {
+      replyDiv.textContent += token;
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+    chatStatus.textContent = "";
   } catch (err) {
-    addMsg("error", err.message);
+    replyDiv.textContent = err.message;
+    chatStatus.textContent = "";
   }
-  status.textContent = "";
   sendBtn.disabled = false;
 }
 
@@ -69,19 +150,6 @@ chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendBtn.cl
 resetBtn.addEventListener("click", () => {
   chat = createChat();
   chatMessages.innerHTML = "";
-});
-
-recBtn.addEventListener("click", async () => {
-  recBtn.disabled = true;
-  status.textContent = "Listening...";
-  try {
-    const text = await listen();
-    chatInput.value = text;
-    status.textContent = "";
-  } catch (err) {
-    status.textContent = err.message;
-  }
-  recBtn.disabled = false;
 });
 </script>
 </body>
