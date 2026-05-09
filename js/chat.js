@@ -1,37 +1,64 @@
 const NVIDIA_BASE = "https://integrate.api.nvidia.com/v1";
-const NVIDIA_MODEL = "google/gemma-4-31b-it";
+const NVIDIA_MODEL = "meta/llama-3.1-8b-instruct";
 const NVIDIA_KEY = "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";
-export const PRESETS = {
-nvidia: { url: NVIDIA_BASE, model: NVIDIA_MODEL, key: NVIDIA_KEY },
-openai: { url: "https://api.openai.com/v1", model: "gpt-3.5-turbo" },
-openrouter: { url: "https://openrouter.ai/api/v1", model: "openai/gpt-3.5-turbo" },
-groq: { url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
-together: { url: "https://api.together.xyz/v1", model: "meta-llama/Llama-3-70b-chat-hf" },
-ollama: { url: "http://localhost:11434/v1", model: "llama3" }
-};
-export function createChat(baseUrl, apiKey, model, systemPrompt) {
-const url = baseUrl.replace(/\/+$/, "") + "/chat/completions";
-let conversation = [];
-return {
-async send(userText) {
-conversation.push({ role: "user", content: userText });
-const messages = systemPrompt ? [{ role: "system", content: systemPrompt }, ...conversation] : [...conversation];
-const res = await fetch(url, {
-method: "POST",
-headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-body: JSON.stringify({ model, messages, stream: false })
-});
-if (!res.ok) {
-const err = await res.text();
-throw new Error(`HTTP ${res.status}: ${err}`);
+const CORS_PROXY = "https://corsproxy.io/?";
+
+const targetUrl = NVIDIA_BASE + "/chat/completions";
+const url = CORS_PROXY + encodeURIComponent(targetUrl);
+
+async function streamMessages(messages, onToken) {
+  const body = {
+    model: NVIDIA_MODEL,
+    messages,
+    stream: true,
+    max_tokens: 1024,
+    temperature: 0.7,
+    top_p: 0.9
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${NVIDIA_KEY}`
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`HTTP ${res.status}: ${err}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let reply = "";
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith("data:")) continue;
+      const data = trimmed.slice(5).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const json = JSON.parse(data);
+        const token = json.choices?.[0]?.delta?.content;
+        if (token) {
+          reply += token;
+          if (onToken) onToken(token);
+        }
+      } catch {}
+    }
+  }
+  return reply;
 }
-const data = await res.json();
-const reply = data.choices?.[0]?.message?.content || JSON.stringify(data);
-conversation.push({ role: "assistant", content: reply });
-return reply;
-},
-reset() {
-conversation = [];
-}
-};
+
+export async function streamQuery(prompt, onToken) {
+  const messages = [
+    { role: "system", content: "You generate stock footage search keywords from audio transcripts. Respond only in the requested format. Use spaces between words, never underscores." },
+    { role: "user", content: prompt }
+  ];
+  return streamMessages(messages, onToken);
 }

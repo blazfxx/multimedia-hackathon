@@ -4,139 +4,151 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Demo</title>
+<style>
+body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 16px; }
+section { margin-bottom: 24px; }
+h2 { margin-bottom: 8px; }
+.box { border: 1px solid #ccc; padding: 8px; min-height: 40px; max-height: 300px; overflow-y: auto; margin-bottom: 8px; white-space: pre-wrap; }
+.seg-row { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid #eee; }
+.seg-row .ts { min-width: 90px; color: #666; font-size: 0.85em; }
+.seg-row .seg-text { flex: 1; }
+button { margin-right: 4px; }
+p { margin: 4px 0; }
+</style>
 </head>
 <body>
 <h1>AI Demo</h1>
-<p><a href="#transcribe">Transcription</a> | <a href="#chat">Chat API</a></p>
-<hr>
-<h2 id="transcribe">Audio Transcription (NVIDIA Parakeet ASR)</h2>
-<input type="file" id="audio-file" accept="audio/*"><br><br>
-<button id="transcribe-btn" disabled>Transcribe</button>
-<button id="save-btn" disabled>Save</button>
-<p id="t-status"></p>
-<h3>Result</h3>
-<pre id="t-result"></pre>
-<h3>History</h3>
-<div id="t-history"></div>
-<hr>
-<h2 id="chat">Chat (NVIDIA NIM - Gemma 4)</h2>
-<label>Preset: </label>
-<button onclick="applyPreset('nvidia')">NVIDIA NIM</button>
-<button onclick="applyPreset('openai')">OpenAI</button>
-<button onclick="applyPreset('openrouter')">OpenRouter</button>
-<button onclick="applyPreset('groq')">Groq</button>
-<button onclick="applyPreset('together')">Together AI</button>
-<button onclick="applyPreset('ollama')">Ollama (local)</button>
-<br><br>
-<label>Base URL:<br><input type="text" id="base-url" size="60" value="https://integrate.api.nvidia.com/v1"></label><br><br>
-<label>API Key:<br><input type="password" id="api-key" size="60" value="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"></label><br><br>
-<label>Model:<br><input type="text" id="model" size="60" value="google/gemma-4-31b-it"></label><br><br>
 
-<div id="chat-messages" style="border:1px solid #ccc;padding:8px;max-height:300px;overflow-y:auto;margin-bottom:8px"></div>
-<input type="text" id="chat-input" size="60" placeholder="Type a message...">
-<button id="send-btn">Send</button>
-<button onclick="resetChat()">Reset</button>
-<p id="c-status"></p>
+<section>
+  <h2>Transcription</h2>
+  <div id="transcript-results" class="box"></div>
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
+    <button id="rec-btn" title="Record voice">&#127908;</button>
+    <button id="clear-trans-btn">Clear</button>
+  </div>
+  <p id="trans-status"></p>
+</section>
+
+<hr>
+
+<section>
+  <h2>Stock Footage Keywords</h2>
+  <div id="keywords-results" class="box"></div>
+  <button id="gen-kw-btn" disabled>Generate Keywords</button>
+  <p id="kw-status"></p>
+</section>
+
 <script type="module">
-import { transcribeAudio, saveTranscription, loadTranscriptions, deleteTranscription } from "./js/transcribe.js?v=2";
-import { PRESETS, createChat } from "./js/chat.js?v=2";
-window.applyPreset = (name) => {
-const p = PRESETS[name];
-if (!p) return;
-document.getElementById("base-url").value = p.url;
-document.getElementById("model").value = p.model;
-if (p.key) document.getElementById("api-key").value = p.key;
-};
-const fileInput = document.getElementById("audio-file");
-const tBtn = document.getElementById("transcribe-btn");
-const saveBtn = document.getElementById("save-btn");
-const tStatus = document.getElementById("t-status");
-const tResult = document.getElementById("t-result");
-const tHistory = document.getElementById("t-history");
-let lastTranscription = "";
-fileInput.addEventListener("change", () => {
-tBtn.disabled = !fileInput.files.length;
+import { isSpeechSupported, listen, transcribeFile, saveTranscription } from "./js/transcribe.js?v=7";
+import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=7";
+
+const audioFile = document.getElementById("audio-file");
+const recBtn = document.getElementById("rec-btn");
+const clearTransBtn = document.getElementById("clear-trans-btn");
+const transStatus = document.getElementById("trans-status");
+const transcriptResults = document.getElementById("transcript-results");
+
+const genKwBtn = document.getElementById("gen-kw-btn");
+const kwStatus = document.getElementById("kw-status");
+const keywordsResults = document.getElementById("keywords-results");
+
+let lastSegments = null;
+let lastDuration = null;
+
+if (!isSpeechSupported()) {
+  recBtn.disabled = true;
+  recBtn.title = "Speech Recognition not supported (use Chrome)";
+}
+
+function renderSegments(segments, duration) {
+  transcriptResults.innerHTML = "";
+  if (duration) {
+    const durDiv = document.createElement("div");
+    durDiv.innerHTML = `<strong>Duration:</strong> ${fmt(duration)}`;
+    transcriptResults.appendChild(durDiv);
+  }
+  segments.forEach(s => {
+    const div = document.createElement("div");
+    div.className = "seg-row";
+    div.innerHTML = `<span class="ts">[${fmt(s.start)} - ${fmt(s.end)}]</span><span class="seg-text">${escHtml(s.text)}</span>`;
+    transcriptResults.appendChild(div);
+  });
+  transcriptResults.scrollTop = transcriptResults.scrollHeight;
+}
+
+audioFile.addEventListener("change", async () => {
+  const file = audioFile.files[0];
+  if (!file) return;
+  transStatus.textContent = "Transcribing file...";
+  audioFile.disabled = true;
+  try {
+    const result = await transcribeFile(file);
+    lastSegments = result.segments;
+    lastDuration = result.duration;
+    renderSegments(result.segments, result.duration);
+    saveTranscription(file.name, result);
+    genKwBtn.disabled = false;
+    transStatus.textContent = "";
+  } catch (err) {
+    transStatus.textContent = err.message;
+  }
+  audioFile.disabled = false;
+  audioFile.value = "";
 });
-tBtn.addEventListener("click", async () => {
-if (!fileInput.files.length) return;
-const file = fileInput.files[0];
-tBtn.disabled = true;
-tStatus.textContent = "Transcribing...";
-tResult.textContent = "";
-try {
-const text = await transcribeAudio(file);
-tResult.textContent = text;
-lastTranscription = text;
-saveBtn.disabled = false;
-} catch (err) {
-tResult.textContent = "Error: " + err.message;
-}
-tStatus.textContent = "";
-tBtn.disabled = false;
+
+recBtn.addEventListener("click", async () => {
+  recBtn.disabled = true;
+  transStatus.textContent = "Listening...";
+  try {
+    const text = await listen();
+    const seg = { start: 0, end: 10, text };
+    lastSegments = [seg];
+    lastDuration = 10;
+    renderSegments(lastSegments, lastDuration);
+    saveTranscription("mic", { text, duration: lastDuration, segments: lastSegments });
+    genKwBtn.disabled = false;
+    transStatus.textContent = "";
+  } catch (err) {
+    transStatus.textContent = err.message;
+  }
+  recBtn.disabled = false;
 });
-saveBtn.addEventListener("click", () => {
-if (!lastTranscription || !fileInput.files.length) return;
-saveTranscription(fileInput.files[0].name, lastTranscription);
-saveBtn.disabled = true;
-renderHistory();
+
+clearTransBtn.addEventListener("click", () => {
+  transcriptResults.innerHTML = "";
+  keywordsResults.innerHTML = "";
+  localStorage.removeItem("transcriptions");
+  lastSegments = null;
+  lastDuration = null;
+  genKwBtn.disabled = true;
 });
-function renderHistory() {
-const items = loadTranscriptions();
-if (!items.length) {
-tHistory.innerHTML = "<p><em>None yet.</em></p>";
-return;
-}
-tHistory.innerHTML = items.map((item, i) =>
-`<div style="border:1px solid #ccc;padding:8px;margin-bottom:6px">` +
-`<strong>${item.filename}</strong> — ${new Date(item.date).toLocaleString()} ` +
-`<button onclick="delT(${i})">Delete</button>` +
-`<pre>${item.text}</pre></div>`
-).join("");
-}
-window.delT = (i) => { deleteTranscription(i); renderHistory(); };
-renderHistory();
-let chat = null;
-function getChat() {
-if (!chat) {
-chat = createChat(
-document.getElementById("base-url").value,
-document.getElementById("api-key").value,
-document.getElementById("model").value,
-"You are a helpful assistant."
-);
-}
-return chat;
-}
-window.resetChat = () => { chat = null; document.getElementById("chat-messages").innerHTML = ""; };
-const chatInput = document.getElementById("chat-input");
-const sendBtn = document.getElementById("send-btn");
-const cStatus = document.getElementById("c-status");
-const chatMessages = document.getElementById("chat-messages");
-function addMsg(role, content) {
-const div = document.createElement("div");
-div.innerHTML = `<strong>${role}:</strong> ${content}`;
-chatMessages.appendChild(div);
-chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-sendBtn.addEventListener("click", async () => {
-const text = chatInput.value.trim();
-if (!text) return;
-chat = null;
-const c = getChat();
-addMsg("you", text);
-chatInput.value = "";
-sendBtn.disabled = true;
-cStatus.textContent = "Thinking...";
-try {
-const reply = await c.send(text);
-addMsg("assistant", reply);
-} catch (err) {
-addMsg("error", err.message);
-}
-cStatus.textContent = "";
-sendBtn.disabled = false;
+
+genKwBtn.addEventListener("click", async () => {
+  if (!lastSegments || !lastDuration) return;
+  const footageSegs = buildFootageSegments(lastSegments, lastDuration);
+  genKwBtn.disabled = true;
+  kwStatus.textContent = "Generating keywords...";
+  keywordsResults.innerHTML = "";
+  try {
+    const raw = await generateKeywords(footageSegs, (token) => {
+      keywordsResults.textContent += token;
+      keywordsResults.scrollTop = keywordsResults.scrollHeight;
+    });
+    keywordsResults.textContent = raw;
+    kwStatus.textContent = `Each segment = 15% of total audio (${fmt(lastDuration)})`;
+  } catch (err) {
+    keywordsResults.textContent = err.message;
+    kwStatus.textContent = "";
+  }
+  genKwBtn.disabled = false;
 });
-chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendBtn.click(); });
+
+function escHtml(s) {
+  const d = document.createElement("span");
+  d.textContent = s;
+  return d.innerHTML;
+}
 </script>
 </body>
 </html>

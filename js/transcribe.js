@@ -1,36 +1,66 @@
-const NVIDIA_BASE = "https://integrate.api.nvidia.com/v1";
-const NVIDIA_MODEL = "nvidia/parakeet-1.1b-rnnt-multilingual-asr";
-const NVIDIA_KEY = "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";
-export async function transcribeAudio(file, options = {}) {
-if (!file) throw new Error("No file provided");
-const apiKey = options.apiKey || NVIDIA_KEY;
-const model = options.model || NVIDIA_MODEL;
-const baseUrl = (options.baseUrl || NVIDIA_BASE).replace(/\/+$/, "");
-const formData = new FormData();
-formData.append("file", file);
-formData.append("model", model);
-const res = await fetch(baseUrl + "/audio/transcriptions", {
-method: "POST",
-headers: { "Authorization": `Bearer ${apiKey}` },
-body: formData
-});
-if (!res.ok) {
-const err = await res.text();
-throw new Error(`HTTP ${res.status}: ${err}`);
+const GROQ_KEY = "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";
+const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
+const CORS_PROXY = "https://corsproxy.io/?";
+
+export function isSpeechSupported() {
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 }
-const data = await res.json();
-return data.text || JSON.stringify(data);
+
+export function listen() {
+  return new Promise((resolve, reject) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return reject(new Error("Speech Recognition not supported. Use Chrome."));
+    const recognition = new SR();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (e) => resolve(e.results[0][0].transcript);
+    recognition.onerror = (e) => reject(new Error("Speech error: " + e.error));
+    recognition.start();
+  });
 }
-export function saveTranscription(filename, text) {
-const saved = JSON.parse(localStorage.getItem("transcriptions") || "[]");
-saved.unshift({ filename, text, date: new Date().toISOString() });
-localStorage.setItem("transcriptions", JSON.stringify(saved));
+
+export async function transcribeFile(file) {
+  if (!GROQ_KEY) throw new Error("Groq API key not set.");
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("model", "whisper-large-v3-turbo");
+  formData.append("response_format", "verbose_json");
+  formData.append("timestamp_granularities[]", "segment");
+  const url = CORS_PROXY + encodeURIComponent(GROQ_URL);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${GROQ_KEY}` },
+    body: formData
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`HTTP ${res.status}: ${err}`);
+  }
+  const data = await res.json();
+  return {
+    text: data.text,
+    duration: data.duration,
+    segments: (data.segments || []).map(s => ({
+      start: s.start,
+      end: s.end,
+      text: s.text
+    }))
+  };
 }
+
+export function saveTranscription(filename, result) {
+  const saved = JSON.parse(localStorage.getItem("transcriptions") || "[]");
+  saved.unshift({ filename, ...result, date: new Date().toISOString() });
+  localStorage.setItem("transcriptions", JSON.stringify(saved));
+}
+
 export function loadTranscriptions() {
-return JSON.parse(localStorage.getItem("transcriptions") || "[]");
+  return JSON.parse(localStorage.getItem("transcriptions") || "[]");
 }
+
 export function deleteTranscription(index) {
-const saved = JSON.parse(localStorage.getItem("transcriptions") || "[]");
-saved.splice(index, 1);
-localStorage.setItem("transcriptions", JSON.stringify(saved));
+  const saved = JSON.parse(localStorage.getItem("transcriptions") || "[]");
+  saved.splice(index, 1);
+  localStorage.setItem("transcriptions", JSON.stringify(saved));
 }
