@@ -8,14 +8,19 @@
 body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 16px; }
 section { margin-bottom: 24px; }
 h2 { margin-bottom: 8px; }
-#transcript-results { border: 1px solid #ccc; padding: 8px; min-height: 60px; max-height: 200px; overflow-y: auto; margin-bottom: 8px; white-space: pre-wrap; }
-#transcript-results div { margin-bottom: 4px; }
-#chat-messages { border: 1px solid #ccc; padding: 8px; height: 250px; overflow-y: auto; margin-bottom: 8px; }
+.box { border: 1px solid #ccc; padding: 8px; min-height: 40px; max-height: 300px; overflow-y: auto; margin-bottom: 8px; white-space: pre-wrap; }
+.box div { margin-bottom: 4px; padding: 2px 0; border-bottom: 1px solid #eee; }
+.box .ts { color: #666; font-size: 0.85em; margin-right: 6px; }
+.box .kw-label { font-weight: bold; color: #555; }
+.box .kw-text { color: #2a6; }
 #chat-messages div { margin-bottom: 6px; }
 #chat-input { width: calc(100% - 60px); }
 #rec-btn { margin-left: 4px; }
 button { margin-right: 4px; }
 p { margin: 4px 0; }
+.seg-row { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid #eee; }
+.seg-row .ts { min-width: 90px; color: #666; font-size: 0.85em; }
+.seg-row .seg-text { flex: 1; }
 </style>
 </head>
 <body>
@@ -23,7 +28,7 @@ p { margin: 4px 0; }
 
 <section>
   <h2>Transcription</h2>
-  <div id="transcript-results"></div>
+  <div id="transcript-results" class="box"></div>
   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
     <input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
     <button id="rec-btn" title="Record voice">&#127908;</button>
@@ -35,8 +40,17 @@ p { margin: 4px 0; }
 <hr>
 
 <section>
+  <h2>Stock Footage Keywords</h2>
+  <div id="keywords-results" class="box"></div>
+  <button id="gen-kw-btn" disabled>Generate Keywords</button>
+  <p id="kw-status"></p>
+</section>
+
+<hr>
+
+<section>
   <h2>Chat</h2>
-  <div id="chat-messages"></div>
+  <div id="chat-messages" class="box"></div>
   <div style="display:flex;align-items:center">
     <input type="text" id="chat-input" placeholder="Type a message...">
   </div>
@@ -48,14 +62,19 @@ p { margin: 4px 0; }
 </section>
 
 <script type="module">
-import { isSpeechSupported, listen, transcribeFile, saveTranscription, loadTranscriptions, deleteTranscription } from "./js/transcribe.js?v=5";
-import { createChat } from "./js/chat.js?v=5";
+import { isSpeechSupported, listen, transcribeFile, saveTranscription, loadTranscriptions } from "./js/transcribe.js?v=6";
+import { createChat } from "./js/chat.js?v=6";
+import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=6";
 
 const audioFile = document.getElementById("audio-file");
 const recBtn = document.getElementById("rec-btn");
 const clearTransBtn = document.getElementById("clear-trans-btn");
 const transStatus = document.getElementById("trans-status");
 const transcriptResults = document.getElementById("transcript-results");
+
+const genKwBtn = document.getElementById("gen-kw-btn");
+const kwStatus = document.getElementById("kw-status");
+const keywordsResults = document.getElementById("keywords-results");
 
 const chatInput = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
@@ -64,18 +83,37 @@ const chatStatus = document.getElementById("chat-status");
 const chatMessages = document.getElementById("chat-messages");
 
 let chat = createChat();
+let lastSegments = null;
+let lastDuration = null;
 
 if (!isSpeechSupported()) {
   recBtn.disabled = true;
   recBtn.title = "Speech Recognition not supported (use Chrome)";
 }
 
-loadTranscriptions().forEach(t => addTranscript(t.text, t.filename));
+function renderSegments(segments, duration) {
+  transcriptResults.innerHTML = "";
+  if (duration) {
+    const durDiv = document.createElement("div");
+    durDiv.innerHTML = `<strong>Duration:</strong> ${fmt(duration)}`;
+    transcriptResults.appendChild(durDiv);
+  }
+  segments.forEach(s => {
+    const div = document.createElement("div");
+    div.innerHTML = `<span class="ts">[${fmt(s.start)} - ${fmt(s.end)}]</span> ${escHtml(s.text)}`;
+    transcriptResults.appendChild(div);
+  });
+  transcriptResults.scrollTop = transcriptResults.scrollHeight;
+}
 
-function addTranscript(text, source) {
-  const div = document.createElement("div");
-  div.textContent = `[${source}] ${text}`;
-  transcriptResults.appendChild(div);
+function renderFootageSegments(footageSegs) {
+  transcriptResults.innerHTML = "";
+  footageSegs.forEach((s, i) => {
+    const div = document.createElement("div");
+    div.className = "seg-row";
+    div.innerHTML = `<span class="ts">[${fmt(s.start)} - ${fmt(s.end)}]</span><span class="seg-text">${escHtml(s.text) || "(silence)"}</span>`;
+    transcriptResults.appendChild(div);
+  });
   transcriptResults.scrollTop = transcriptResults.scrollHeight;
 }
 
@@ -85,9 +123,12 @@ audioFile.addEventListener("change", async () => {
   transStatus.textContent = "Transcribing file...";
   audioFile.disabled = true;
   try {
-    const text = await transcribeFile(file);
-    addTranscript(text, file.name);
-    saveTranscription(file.name, text);
+    const result = await transcribeFile(file);
+    lastSegments = result.segments;
+    lastDuration = result.duration;
+    renderSegments(result.segments, result.duration);
+    saveTranscription(file.name, result);
+    genKwBtn.disabled = false;
     transStatus.textContent = "";
   } catch (err) {
     transStatus.textContent = err.message;
@@ -101,8 +142,13 @@ recBtn.addEventListener("click", async () => {
   transStatus.textContent = "Listening...";
   try {
     const text = await listen();
-    addTranscript(text, "mic");
-    saveTranscription("mic", text);
+    const now = Date.now() / 1000;
+    const seg = { start: 0, end: 10, text };
+    lastSegments = [seg];
+    lastDuration = 10;
+    renderSegments(lastSegments, lastDuration);
+    saveTranscription("mic", { text, duration: lastDuration, segments: lastSegments });
+    genKwBtn.disabled = false;
     transStatus.textContent = "";
   } catch (err) {
     transStatus.textContent = err.message;
@@ -112,7 +158,32 @@ recBtn.addEventListener("click", async () => {
 
 clearTransBtn.addEventListener("click", () => {
   transcriptResults.innerHTML = "";
+  keywordsResults.innerHTML = "";
   localStorage.removeItem("transcriptions");
+  lastSegments = null;
+  lastDuration = null;
+  genKwBtn.disabled = true;
+});
+
+genKwBtn.addEventListener("click", async () => {
+  if (!lastSegments || !lastDuration) return;
+  const footageSegs = buildFootageSegments(lastSegments, lastDuration);
+  renderFootageSegments(footageSegs);
+  genKwBtn.disabled = true;
+  kwStatus.textContent = "Generating keywords...";
+  keywordsResults.innerHTML = "";
+  try {
+    const raw = await generateKeywords(footageSegs, (token) => {
+      keywordsResults.textContent += token;
+      keywordsResults.scrollTop = keywordsResults.scrollHeight;
+    });
+    keywordsResults.textContent = raw;
+    kwStatus.textContent = `Each segment = 15% of total audio (${fmt(lastDuration)})`;
+  } catch (err) {
+    keywordsResults.textContent = err.message;
+    kwStatus.textContent = "";
+  }
+  genKwBtn.disabled = false;
 });
 
 function addMsg(role, content) {
@@ -151,6 +222,12 @@ resetBtn.addEventListener("click", () => {
   chat = createChat();
   chatMessages.innerHTML = "";
 });
+
+function escHtml(s) {
+  const d = document.createElement("span");
+  d.textContent = s;
+  return d.innerHTML;
+}
 </script>
 </body>
 </html>

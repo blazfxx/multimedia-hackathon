@@ -21,11 +21,12 @@ export function listen() {
 }
 
 export async function transcribeFile(file) {
-  if (!GROQ_KEY) throw new Error("Groq API key not set. Add your key in js/transcribe.js.");
+  if (!GROQ_KEY) throw new Error("Groq API key not set.");
   const formData = new FormData();
   formData.append("file", file);
   formData.append("model", "whisper-large-v3-turbo");
-  formData.append("response_format", "json");
+  formData.append("response_format", "verbose_json");
+  formData.append("timestamp_granularities[]", "segment");
   const url = CORS_PROXY + encodeURIComponent(GROQ_URL);
   const res = await fetch(url, {
     method: "POST",
@@ -37,12 +38,20 @@ export async function transcribeFile(file) {
     throw new Error(`HTTP ${res.status}: ${err}`);
   }
   const data = await res.json();
-  return data.text;
+  return {
+    text: data.text,
+    duration: data.duration,
+    segments: (data.segments || []).map(s => ({
+      start: s.start,
+      end: s.end,
+      text: s.text
+    }))
+  };
 }
 
-export function saveTranscription(filename, text) {
+export function saveTranscription(filename, result) {
   const saved = JSON.parse(localStorage.getItem("transcriptions") || "[]");
-  saved.unshift({ filename, text, date: new Date().toISOString() });
+  saved.unshift({ filename, ...result, date: new Date().toISOString() });
   localStorage.setItem("transcriptions", JSON.stringify(saved));
 }
 
