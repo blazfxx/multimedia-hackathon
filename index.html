@@ -9,18 +9,11 @@ body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 16px;
 section { margin-bottom: 24px; }
 h2 { margin-bottom: 8px; }
 .box { border: 1px solid #ccc; padding: 8px; min-height: 40px; max-height: 300px; overflow-y: auto; margin-bottom: 8px; white-space: pre-wrap; }
-.box div { margin-bottom: 4px; padding: 2px 0; border-bottom: 1px solid #eee; }
-.box .ts { color: #666; font-size: 0.85em; margin-right: 6px; }
-.box .kw-label { font-weight: bold; color: #555; }
-.box .kw-text { color: #2a6; }
-#chat-messages div { margin-bottom: 6px; }
-#chat-input { width: calc(100% - 60px); }
-#rec-btn { margin-left: 4px; }
-button { margin-right: 4px; }
-p { margin: 4px 0; }
 .seg-row { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid #eee; }
 .seg-row .ts { min-width: 90px; color: #666; font-size: 0.85em; }
 .seg-row .seg-text { flex: 1; }
+button { margin-right: 4px; }
+p { margin: 4px 0; }
 </style>
 </head>
 <body>
@@ -46,25 +39,9 @@ p { margin: 4px 0; }
   <p id="kw-status"></p>
 </section>
 
-<hr>
-
-<section>
-  <h2>Chat</h2>
-  <div id="chat-messages" class="box"></div>
-  <div style="display:flex;align-items:center">
-    <input type="text" id="chat-input" placeholder="Type a message...">
-  </div>
-  <div style="margin-top:6px">
-    <button id="send-btn">Send</button>
-    <button id="reset-btn">Reset</button>
-  </div>
-  <p id="chat-status"></p>
-</section>
-
 <script type="module">
-import { isSpeechSupported, listen, transcribeFile, saveTranscription, loadTranscriptions } from "./js/transcribe.js?v=6";
-import { createChat } from "./js/chat.js?v=6";
-import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=6";
+import { isSpeechSupported, listen, transcribeFile, saveTranscription } from "./js/transcribe.js?v=7";
+import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=7";
 
 const audioFile = document.getElementById("audio-file");
 const recBtn = document.getElementById("rec-btn");
@@ -76,13 +53,6 @@ const genKwBtn = document.getElementById("gen-kw-btn");
 const kwStatus = document.getElementById("kw-status");
 const keywordsResults = document.getElementById("keywords-results");
 
-const chatInput = document.getElementById("chat-input");
-const sendBtn = document.getElementById("send-btn");
-const resetBtn = document.getElementById("reset-btn");
-const chatStatus = document.getElementById("chat-status");
-const chatMessages = document.getElementById("chat-messages");
-
-let chat = createChat();
 let lastSegments = null;
 let lastDuration = null;
 
@@ -100,18 +70,8 @@ function renderSegments(segments, duration) {
   }
   segments.forEach(s => {
     const div = document.createElement("div");
-    div.innerHTML = `<span class="ts">[${fmt(s.start)} - ${fmt(s.end)}]</span> ${escHtml(s.text)}`;
-    transcriptResults.appendChild(div);
-  });
-  transcriptResults.scrollTop = transcriptResults.scrollHeight;
-}
-
-function renderFootageSegments(footageSegs) {
-  transcriptResults.innerHTML = "";
-  footageSegs.forEach((s, i) => {
-    const div = document.createElement("div");
     div.className = "seg-row";
-    div.innerHTML = `<span class="ts">[${fmt(s.start)} - ${fmt(s.end)}]</span><span class="seg-text">${escHtml(s.text) || "(silence)"}</span>`;
+    div.innerHTML = `<span class="ts">[${fmt(s.start)} - ${fmt(s.end)}]</span><span class="seg-text">${escHtml(s.text)}</span>`;
     transcriptResults.appendChild(div);
   });
   transcriptResults.scrollTop = transcriptResults.scrollHeight;
@@ -142,7 +102,6 @@ recBtn.addEventListener("click", async () => {
   transStatus.textContent = "Listening...";
   try {
     const text = await listen();
-    const now = Date.now() / 1000;
     const seg = { start: 0, end: 10, text };
     lastSegments = [seg];
     lastDuration = 10;
@@ -168,7 +127,6 @@ clearTransBtn.addEventListener("click", () => {
 genKwBtn.addEventListener("click", async () => {
   if (!lastSegments || !lastDuration) return;
   const footageSegs = buildFootageSegments(lastSegments, lastDuration);
-  renderFootageSegments(footageSegs);
   genKwBtn.disabled = true;
   kwStatus.textContent = "Generating keywords...";
   keywordsResults.innerHTML = "";
@@ -184,43 +142,6 @@ genKwBtn.addEventListener("click", async () => {
     kwStatus.textContent = "";
   }
   genKwBtn.disabled = false;
-});
-
-function addMsg(role, content) {
-  const div = document.createElement("div");
-  div.innerHTML = "<strong>" + role + ":</strong> ";
-  div.querySelector("strong").after(document.createTextNode(content));
-  chatMessages.appendChild(div);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-  return div;
-}
-
-async function sendMessage(text) {
-  if (!text.trim()) return;
-  addMsg("you", text);
-  chatInput.value = "";
-  sendBtn.disabled = true;
-  chatStatus.textContent = "Thinking...";
-  const replyDiv = addMsg("assistant", "");
-  try {
-    await chat.send(text, (token) => {
-      replyDiv.textContent += token;
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-    });
-    chatStatus.textContent = "";
-  } catch (err) {
-    replyDiv.textContent = err.message;
-    chatStatus.textContent = "";
-  }
-  sendBtn.disabled = false;
-}
-
-sendBtn.addEventListener("click", () => sendMessage(chatInput.value));
-chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendBtn.click(); });
-
-resetBtn.addEventListener("click", () => {
-  chat = createChat();
-  chatMessages.innerHTML = "";
 });
 
 function escHtml(s) {

@@ -55,28 +55,9 @@ async function streamMessages(messages, onToken) {
   return reply;
 }
 
-export function createChat() {
-  let conversation = [];
-  return {
-    async send(userText, onToken) {
-      conversation.push({ role: "user", content: userText });
-      const messages = [
-        { role: "system", content: "You are a helpful assistant. Be concise." },
-        ...conversation
-      ];
-      const reply = await streamMessages(messages, onToken);
-      conversation.push({ role: "assistant", content: reply });
-      return reply;
-    },
-    reset() {
-      conversation = [];
-    }
-  };
-}
-
 export async function streamQuery(prompt, onToken) {
   const messages = [
-    { role: "system", content: "You generate stock footage search keywords from audio transcripts. Respond only in the requested format." },
+    { role: "system", content: "You generate stock footage search keywords from audio transcripts. Respond only in the requested format. Use spaces between words, never underscores." },
     { role: "user", content: prompt }
   ];
   return streamMessages(messages, onToken);
