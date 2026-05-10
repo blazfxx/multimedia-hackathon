@@ -1,6 +1,4 @@
-const GROQ_KEY = "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";
-const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
-const CORS_PROXY = "https://corsproxy.io/?";
+const PROXY_BASE = "https://api-proxy.evan-zhao140.workers.dev";
 
 export function isSpeechSupported() {
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -21,16 +19,13 @@ export function listen() {
 }
 
 export async function transcribeFile(file) {
-  if (!GROQ_KEY) throw new Error("Groq API key not set.");
   const formData = new FormData();
   formData.append("file", file);
   formData.append("model", "whisper-large-v3-turbo");
   formData.append("response_format", "verbose_json");
   formData.append("timestamp_granularities[]", "segment");
-  const url = CORS_PROXY + encodeURIComponent(GROQ_URL);
-  const res = await fetch(url, {
+  const res = await fetch(`${PROXY_BASE}/groq/transcriptions`, {
     method: "POST",
-    headers: { "Authorization": `Bearer ${GROQ_KEY}` },
     body: formData
   });
   if (!res.ok) {
