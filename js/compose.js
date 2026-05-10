@@ -1,28 +1,12 @@
 const PROXY_BASE = "https://api-proxy.evan-zhao140.workers.dev";
 const CORE_URL = `${PROXY_BASE}/ffmpeg/ffmpeg-core.js`;
 const WASM_URL = `${PROXY_BASE}/ffmpeg/ffmpeg-core.wasm`;
-const WORKER_PROXY_URL = `${PROXY_BASE}/ffmpeg/814.ffmpeg.js`;
+const WORKER_URL = "/js/ffmpeg-worker.js";
 
 let ffmpeg = null;
 let loaded = false;
 
-function log(msg) {
-  console.log(`[FFmpeg] ${msg}`);
-}
-
-function toBlobURL(url, mimeType) {
-  log(`toBlobURL: fetching ${url} as ${mimeType}`);
-  return fetch(url)
-    .then(r => {
-      log(`toBlobURL: response status=${r.status} content-type=${r.headers.get("content-type")}`);
-      if (!r.ok) throw new Error(`fetch failed: HTTP ${r.status}`);
-      return r.arrayBuffer();
-    })
-    .then(buf => {
-      log(`toBlobURL: got ${buf.byteLength} bytes, creating blob URL`);
-      return URL.createObjectURL(new Blob([buf], { type: mimeType }));
-    });
-}
+function log(msg) { console.log(`[FFmpeg] ${msg}`); }
 
 function fetchFile(data) {
   if (typeof data === "string") return fetch(data).then(r => r.arrayBuffer()).then(b => new Uint8Array(b));
@@ -108,38 +92,42 @@ class FFmpeg {
     if (event === "log") this.#logHandlers.push(handler);
     else if (event === "progress") this.#progressHandlers.push(handler);
   }
+
   off(event, handler) {
     if (event === "log") this.#logHandlers = this.#logHandlers.filter(h => h !== handler);
     else if (event === "progress") this.#progressHandlers = this.#progressHandlers.filter(h => h !== handler);
   }
 
-  async load({ coreURL, wasmURL, workerURL } = {}, { signal } = {}) {
-    log(`Creating Worker: fetching ${workerURL} as blob...`);
-    const workerBlobURL = await toBlobURL(workerURL, "text/javascript");
-    log(`Worker blob URL: ${workerBlobURL}`);
-    this.#worker = new Worker(workerBlobURL);
+  async load({ coreURL, wasmURL, wasmBinary } = {}, { signal } = {}) {
+    log(`Creating Worker from ${WORKER_URL}`);
+    this.#worker = new Worker(WORKER_URL);
     this.#worker.onerror = (e) => {
       log(`Worker error event: ${e.message} filename=${e.filename} lineno=${e.lineno}`);
     };
     log("Worker created, attaching onMessage");
     this.#onMessage();
-    log(`Sending LOAD: coreURL=${coreURL} wasmURL=${wasmURL}`);
-    return this.#send({ type: MsgType.LOAD, data: { coreURL, wasmURL, workerURL } }, undefined, signal);
+    log(`Sending LOAD: coreURL=${coreURL} wasmURL=${wasmURL} wasmBinary=${wasmBinary ? wasmBinary.byteLength + ' bytes' : 'none'}`);
+    const transfer = wasmBinary ? [wasmBinary] : [];
+    return this.#send({ type: MsgType.LOAD, data: { coreURL, wasmURL, wasmBinary } }, transfer, signal);
   }
 
   exec(args, timeout = 0, { signal } = {}) {
     return this.#send({ type: MsgType.EXEC, data: { args, timeout } }, undefined, signal);
   }
+
   writeFile(path, data, { signal } = {}) {
     const transfer = data instanceof Uint8Array ? [data.buffer] : [];
     return this.#send({ type: MsgType.WRITE_FILE, data: { path, data } }, transfer, signal);
   }
+
   readFile(path, encoding = "binary", { signal } = {}) {
     return this.#send({ type: MsgType.READ_FILE, data: { path, encoding } }, undefined, signal);
   }
+
   deleteFile(path, { signal } = {}) {
     return this.#send({ type: MsgType.DELETE_FILE, data: { path } }, undefined, signal);
   }
+
   terminate() {
     this.#worker?.terminate();
     this.#worker = null;
@@ -151,14 +139,29 @@ export async function initFFmpeg(onLog) {
   if (loaded) return;
   log(`crossOriginIsolated = ${window.crossOriginIsolated}`);
   log(`Initializing FFmpeg - proxy: ${PROXY_BASE}/ffmpeg/`);
+
   ffmpeg = new FFmpeg();
   if (onLog) ffmpeg.on("log", ({ message }) => onLog(message));
+
+  let wasmBinary;
   try {
-    log("Loading FFmpeg (worker via blob, core+wasm via proxy)...");
+    log("Pre-fetching WASM binary from proxy...");
+    const wasmRes = await fetch(WASM_URL);
+    log(`WASM fetch: status=${wasmRes.status} content-type=${wasmRes.headers.get("content-type")}`);
+    if (!wasmRes.ok) throw new Error(`WASM fetch failed: HTTP ${wasmRes.status}`);
+    wasmBinary = await wasmRes.arrayBuffer();
+    log(`WASM binary: ${wasmBinary.byteLength} bytes`);
+  } catch (err) {
+    log(`WASM pre-fetch FAILED: ${err.message}`);
+    throw err;
+  }
+
+  try {
+    log("Loading FFmpeg (custom worker, core via proxy, wasmBinary pre-fetched)...");
     await ffmpeg.load({
       coreURL: CORE_URL,
       wasmURL: WASM_URL,
-      workerURL: WORKER_PROXY_URL,
+      wasmBinary,
     });
     loaded = true;
     log("FFmpeg loaded successfully!");
@@ -184,6 +187,7 @@ export async function compileVideo({ footageSegments, audioFile, onProgress }) {
   ffmpeg.on("progress", ({ progress }) => {
     if (onProgress) onProgress(Math.max(0, Math.min(1, progress)));
   });
+
   let idx = 0;
   const clipNames = [];
   for (const seg of footageSegments) {
@@ -194,9 +198,12 @@ export async function compileVideo({ footageSegments, audioFile, onProgress }) {
     idx++;
   }
   if (!clipNames.length) throw new Error("No video clips to compile.");
+
   await ffmpeg.writeFile("audio.mp3", await fetchFile(audioFile));
+
   const concatContent = clipNames.map(f => `file '${f}'`).join("\n");
   await ffmpeg.writeFile("concat.txt", concatContent);
+
   const captionFilters = footageSegments
     .filter(seg => seg.videoData && seg.text)
     .map((seg) => {
@@ -209,7 +216,9 @@ export async function compileVideo({ footageSegments, audioFile, onProgress }) {
       const wrapped = lines.join("\\n");
       return `drawtext=fontcolor=white:fontsize=20:borderw=1:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2+80:text='${wrapped}':enable='between(t\\,${seg.start}\\,${seg.end})'`;
     });
+
   const vf = `scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=24${captionFilters.length ? "," + captionFilters.join(",") : ""}`;
+
   await ffmpeg.exec([
     "-f", "concat", "-safe", "0", "-i", "concat.txt",
     "-i", "audio.mp3",
@@ -221,11 +230,13 @@ export async function compileVideo({ footageSegments, audioFile, onProgress }) {
     "-movflags", "+faststart",
     "-y", "output.mp4",
   ], 0);
+
   const data = await ffmpeg.readFile("output.mp4");
   for (const f of clipNames) await ffmpeg.deleteFile(f);
   await ffmpeg.deleteFile("audio.mp3");
   await ffmpeg.deleteFile("concat.txt");
   await ffmpeg.deleteFile("output.mp4");
+
   const copy = new Uint8Array(data).buffer;
   return new Blob([copy], { type: "video/mp4" });
 }

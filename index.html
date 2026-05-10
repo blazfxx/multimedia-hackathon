@@ -32,7 +32,7 @@ a[download]{display:inline-block;margin:8px 0}
 </head>
 <body>
 <h1>AI Video Compiler</h1>
-<p class="ver">v1.1.0</p>
+<p class="ver">v1.2.0</p>
 <div class="controls">
 <input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
 <button id="start-btn" disabled>Start</button>
@@ -61,7 +61,7 @@ a[download]{display:inline-block;margin:8px 0}
 import { transcribeFile, saveTranscription } from "./js/transcribe.js?v=12";
 import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=12";
 import { parseKeywords, searchFootageForSegments, downloadVideo } from "./js/footage.js?v=12";
-import { initFFmpeg, compileVideo } from "./js/compose.js?v=30";
+import { initFFmpeg, compileVideo } from "./js/compose.js?v=31";
 const audioFile = document.getElementById("audio-file");
 const startBtn = document.getElementById("start-btn");
 const statusEl = document.getElementById("status");
