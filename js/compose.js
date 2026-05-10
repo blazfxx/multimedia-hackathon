@@ -1,5 +1,4 @@
 const CORE_BASE = "./ffmpeg";
-const FFMPEG_BASE = "./ffmpeg";
 
 let ffmpeg = null;
 let loaded = false;
@@ -27,22 +26,12 @@ function fetchFile(data) {
 export async function initFFmpeg(onLog) {
   if (loaded) return;
 
-  if (!window.FFmpegWASM) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = `${FFMPEG_BASE}/ffmpeg.js`;
-      s.onload = resolve;
-      s.onerror = () => reject(new Error(`Failed to load ffmpeg.js`));
-      document.head.appendChild(s);
-    });
-  }
-
   const { FFmpeg } = window.FFmpegWASM;
   ffmpeg = new FFmpeg();
   if (onLog) ffmpeg.on("log", ({ message }) => onLog(message));
 
   const classWorkerURL = await toBlobURL(
-    `${FFMPEG_BASE}/814.ffmpeg.js`,
+    `${CORE_BASE}/814.ffmpeg.js`,
     "text/javascript"
   );
 

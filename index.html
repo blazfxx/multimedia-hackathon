@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Demo</title>
-<style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Demo</title>
+  <script src="./ffmpeg/ffmpeg.js"></script>
+  <style>
 body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 16px; }
 section { margin-bottom: 24px; }
 h2 { margin-bottom: 8px; }
@@ -21,57 +22,49 @@ h2 { margin-bottom: 8px; }
 button { margin-right: 4px; }
 p { margin: 4px 0; }
 video { width: 100%; max-width: 640px; margin: 8px 0; }
-</style>
+  </style>
 </head>
 <body>
 <h1>AI Demo</h1>
-
 <section>
-<h2>Transcription</h2>
-<div id="transcript-results" class="box"></div>
-<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-<input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
-<button id="rec-btn" title="Record voice">&#127908;</button>
-<button id="clear-trans-btn">Clear</button>
-</div>
-<p id="trans-status"></p>
+  <h2>Transcription</h2>
+  <div id="transcript-results" class="box"></div>
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
+    <button id="rec-btn" title="Record voice">&#127908;</button>
+    <button id="clear-trans-btn">Clear</button>
+  </div>
+  <p id="trans-status"></p>
 </section>
-
 <hr>
-
 <section>
-<h2>Stock Footage Keywords</h2>
-<div id="keywords-results" class="box"></div>
-<button id="gen-kw-btn" disabled>Generate Keywords</button>
-<p id="kw-status"></p>
+  <h2>Stock Footage Keywords</h2>
+  <div id="keywords-results" class="box"></div>
+  <button id="gen-kw-btn" disabled>Generate Keywords</button>
+  <p id="kw-status"></p>
 </section>
-
 <hr>
-
 <section>
-<h2>Stock Footage</h2>
-<div id="footage-grid" class="footage-grid"></div>
-<button id="search-footage-btn" disabled>Search Footage</button>
-<p id="footage-status"></p>
+  <h2>Stock Footage</h2>
+  <div id="footage-grid" class="footage-grid"></div>
+  <button id="search-footage-btn" disabled>Search Footage</button>
+  <p id="footage-status"></p>
 </section>
-
 <hr>
-
 <section>
-<h2>Compile Video</h2>
-<button id="load-ffmpeg-btn">Load FFmpeg (~31 MB)</button>
-<button id="compile-btn" disabled>Compile Video</button>
-<div class="progress-bar"><div id="compile-progress" class="progress-fill" style="width:0%"></div></div>
-<p id="compile-status"></p>
-<video id="output-video" controls style="display:none"></video>
-<a id="download-link" style="display:none" download="output.mp4">Download Video</a>
+  <h2>Compile Video</h2>
+  <p id="ffmpeg-status">Loading FFmpeg (~31 MB)...</p>
+  <button id="compile-btn" disabled>Compile Video</button>
+  <div class="progress-bar"><div id="compile-progress" class="progress-fill" style="width:0%"></div></div>
+  <p id="compile-status"></p>
+  <video id="output-video" controls style="display:none">
+  <a id="download-link" style="display:none" download="output.mp4">Download Video</a>
 </section>
-
 <script type="module">
-import { isSpeechSupported, listen, transcribeFile, saveTranscription } from "./js/transcribe.js?v=10";
-import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=10";
-import { parseKeywords, searchFootageForSegments, downloadVideo } from "./js/footage.js?v=10";
-import { initFFmpeg, compileVideo } from "./js/compose.js?v=11";
+import { isSpeechSupported, listen, transcribeFile, saveTranscription } from "./js/transcribe.js?v=11";
+import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=11";
+import { parseKeywords, searchFootageForSegments, downloadVideo } from "./js/footage.js?v=11";
+import { initFFmpeg, compileVideo } from "./js/compose.js?v=12";
 
 const audioFile = document.getElementById("audio-file");
 const recBtn = document.getElementById("rec-btn");
@@ -84,7 +77,7 @@ const keywordsResults = document.getElementById("keywords-results");
 const searchFootageBtn = document.getElementById("search-footage-btn");
 const footageGrid = document.getElementById("footage-grid");
 const footageStatus = document.getElementById("footage-status");
-const loadFfmpegBtn = document.getElementById("load-ffmpeg-btn");
+const ffmpegStatus = document.getElementById("ffmpeg-status");
 const compileBtn = document.getElementById("compile-btn");
 const compileProgress = document.getElementById("compile-progress");
 const compileStatus = document.getElementById("compile-status");
@@ -102,6 +95,14 @@ if (!isSpeechSupported()) {
   recBtn.disabled = true;
   recBtn.title = "Speech Recognition not supported (use Chrome)";
 }
+
+initFFmpeg((msg) => { ffmpegStatus.textContent = msg.slice(0, 80); }).then(() => {
+  ffmpegLoaded = true;
+  ffmpegStatus.textContent = "FFmpeg ready";
+  if (lastFootageResults) compileBtn.disabled = false;
+}).catch((err) => {
+  ffmpegStatus.textContent = "FFmpeg load failed: " + err.message;
+});
 
 function renderSegments(segments, duration) {
   transcriptResults.innerHTML = "";
@@ -198,7 +199,10 @@ genKwBtn.addEventListener("click", async () => {
 searchFootageBtn.addEventListener("click", async () => {
   if (!lastRawKeywords) return;
   const parsed = parseKeywords(lastRawKeywords);
-  if (!parsed.length) { footageStatus.textContent = "No segments parsed from keywords."; return; }
+  if (!parsed.length) {
+    footageStatus.textContent = "No segments parsed from keywords.";
+    return;
+  }
   const footageSegs = buildFootageSegments(lastSegments, lastDuration);
   searchFootageBtn.disabled = true;
   footageStatus.textContent = "Searching stock footage...";
@@ -221,21 +225,6 @@ searchFootageBtn.addEventListener("click", async () => {
   searchFootageBtn.disabled = false;
 });
 
-loadFfmpegBtn.addEventListener("click", async () => {
-  loadFfmpegBtn.disabled = true;
-  compileStatus.textContent = "Loading FFmpeg core (~31 MB)...";
-  try {
-    await initFFmpeg((msg) => { compileStatus.textContent = msg.slice(0, 80); });
-    ffmpegLoaded = true;
-    loadFfmpegBtn.textContent = "FFmpeg Loaded";
-    if (lastFootageResults) compileBtn.disabled = false;
-    compileStatus.textContent = "FFmpeg ready";
-  } catch (err) {
-    compileStatus.textContent = "FFmpeg load failed: " + err.message;
-    loadFfmpegBtn.disabled = false;
-  }
-});
-
 compileBtn.addEventListener("click", async () => {
   if (!lastFootageResults || !lastAudioFile || !lastSegments) return;
   compileBtn.disabled = true;
@@ -248,9 +237,7 @@ compileBtn.addEventListener("click", async () => {
     const videoEntry = match?.videos?.[0];
     let videoData = null;
     if (videoEntry?.videoUrl) {
-      try {
-        videoData = await downloadVideo(videoEntry.videoUrl);
-      } catch (e) { /* skip */ }
+      try { videoData = await downloadVideo(videoEntry.videoUrl); } catch (e) { /* skip */ }
     }
     merged.push({ ...footageSegs[i], videoData });
   }
@@ -262,13 +249,9 @@ compileBtn.addEventListener("click", async () => {
   }
   compileStatus.textContent = "Compiling video...";
   try {
-    const blob = await compileVideo({
-      footageSegments: withVideo,
-      audioFile: lastAudioFile,
-      onProgress: (p) => {
-        compileProgress.style.width = `${Math.round(p * 100)}%`;
-      }
-    });
+    const blob = await compileVideo({ footageSegments: withVideo, audioFile: lastAudioFile, onProgress: (p) => {
+      compileProgress.style.width = `${Math.round(p * 100)}%`;
+    }});
     const url = URL.createObjectURL(blob);
     outputVideo.src = url;
     outputVideo.style.display = "block";
@@ -281,11 +264,7 @@ compileBtn.addEventListener("click", async () => {
   compileBtn.disabled = false;
 });
 
-function escHtml(s) {
-  const d = document.createElement("span");
-  d.textContent = s;
-  return d.innerHTML;
-}
+function escHtml(s) { const d = document.createElement("span"); d.textContent = s; return d.innerHTML; }
 </script>
 </body>
 </html>
