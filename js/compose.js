@@ -129,8 +129,10 @@ export async function initFFmpeg(onLog) {
   ffmpeg = new FFmpeg();
   if (onLog) ffmpeg.on("log", ({ message }) => onLog(message));
 
+  const coreBlobURL = await toBlobURL(`${CORE_CDN}/ffmpeg-core.js`, "text/javascript");
+
   await ffmpeg.load({
-    coreURL: `${CORE_CDN}/ffmpeg-core.js`,
+    coreURL: coreBlobURL,
     wasmURL: `${CORE_CDN}/ffmpeg-core.wasm`,
   });
   loaded = true;
