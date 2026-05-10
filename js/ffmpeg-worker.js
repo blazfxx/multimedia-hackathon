@@ -1,22 +1,20 @@
 const MsgType = {
-  LOAD: "LOAD",
-  EXEC: "EXEC",
-  WRITE_FILE: "WRITE_FILE",
-  READ_FILE: "READ_FILE",
-  DELETE_FILE: "DELETE_FILE",
-  RENAME: "RENAME",
-  CREATE_DIR: "CREATE_DIR",
-  LIST_DIR: "LIST_DIR",
-  DELETE_DIR: "DELETE_DIR",
-  ERROR: "ERROR",
-  DOWNLOAD: "DOWNLOAD",
-  PROGRESS: "PROGRESS",
-  LOG: "LOG",
-  MOUNT: "MOUNT",
-  UNMOUNT: "UNMOUNT",
+  LOAD: "LOAD", EXEC: "EXEC", WRITE_FILE: "WRITE_FILE", READ_FILE: "READ_FILE",
+  DELETE_FILE: "DELETE_FILE", RENAME: "RENAME", CREATE_DIR: "CREATE_DIR",
+  LIST_DIR: "LIST_DIR", DELETE_DIR: "DELETE_DIR", ERROR: "ERROR",
+  DOWNLOAD: "DOWNLOAD", PROGRESS: "PROGRESS", LOG: "LOG",
+  MOUNT: "MOUNT", UNMOUNT: "UNMOUNT",
 };
 
 let core = null;
+
+self.addEventListener("error", (e) => {
+  self.postMessage({ type: MsgType.ERROR, data: `Worker global error: ${e.message} at ${e.filename}:${e.lineno}` });
+});
+
+self.addEventListener("unhandledrejection", (e) => {
+  self.postMessage({ type: MsgType.ERROR, data: `Worker unhandled rejection: ${e.reason}` });
+});
 
 self.onmessage = async ({ data: { id, type, data } }) => {
   const transfer = [];
@@ -28,20 +26,24 @@ self.onmessage = async ({ data: { id, type, data } }) => {
         result = await (async ({ coreURL, wasmURL, coreText, wasmBinary }) => {
           if (!core) {
             try {
-              self.Module = self.Module || {};
-              self.Module.mainScriptUrlOrBlob = coreURL;
               eval(coreText);
             } catch (e) {
               throw new Error("failed to eval ffmpeg-core.js: " + e.message);
             }
+            if (typeof self.createFFmpegCore !== "function") {
+              throw new Error("createFFmpegCore not found after eval");
+            }
           }
           const moduleOpts = {
-            mainScriptUrlOrBlob: `${coreURL}#${btoa(JSON.stringify({ wasmURL, workerURL: coreURL.replace(/.js$/g, ".worker.js") }))}`,
+            mainScriptUrlOrBlob: coreURL,
+            wasmBinary: wasmBinary ? new Uint8Array(wasmBinary) : undefined,
+            workerOptions: { type: "module" },
           };
-          if (wasmBinary) {
-            moduleOpts.wasmBinary = new Uint8Array(wasmBinary);
+          try {
+            core = await self.createFFmpegCore(moduleOpts);
+          } catch (e) {
+            throw new Error("createFFmpegCore failed: " + e.message + "\n" + e.stack);
           }
-          core = await self.createFFmpegCore(moduleOpts);
           core.setLogger((msg) => self.postMessage({ type: MsgType.LOG, data: msg }));
           core.setProgress((p) => self.postMessage({ type: MsgType.PROGRESS, data: p }));
           return true;
