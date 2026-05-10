@@ -99,7 +99,7 @@ class FFmpeg {
     return this.#send({ type: MsgType.LOAD, data: { coreURL, wasmURL, workerURL } }, undefined, signal);
   }
 
-  exec(args, timeout = -1, { signal } = {}) {
+  exec(args, timeout = 0, { signal } = {}) {
     return this.#send({ type: MsgType.EXEC, data: { args, timeout } }, undefined, signal);
   }
 
@@ -155,41 +155,21 @@ export async function compileVideo({ footageSegments, audioFile, onProgress }) {
   });
 
   let idx = 0;
-  const rawClipNames = [];
-  const normClipNames = [];
+  const clipNames = [];
 
   for (const seg of footageSegments) {
     if (!seg.videoData) continue;
-    const rawName = `raw${idx}.mp4`;
-    const normName = `norm${idx}.mp4`;
-    await ffmpeg.writeFile(rawName, new Uint8Array(seg.videoData));
-    rawClipNames.push(rawName);
-    normClipNames.push(normName);
+    const name = `clip${idx}.mp4`;
+    await ffmpeg.writeFile(name, new Uint8Array(seg.videoData));
+    clipNames.push(name);
     idx++;
   }
 
-  if (!normClipNames.length) throw new Error("No video clips to compile.");
-
-  const normW = 1280;
-  const normH = 720;
-  const normFps = 24;
-
-  for (let i = 0; i < rawClipNames.length; i++) {
-    await ffmpeg.exec([
-      "-i", rawClipNames[i],
-      "-vf", `scale=${normW}:${normH}:force_original_aspect_ratio=decrease,pad=${normW}:${normH}:(ow-iw)/2:(oh-ih)/2`,
-      "-r", String(normFps),
-      "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-      "-an",
-      "-y",
-      normClipNames[i],
-    ]);
-    await ffmpeg.deleteFile(rawClipNames[i]);
-  }
+  if (!clipNames.length) throw new Error("No video clips to compile.");
 
   await ffmpeg.writeFile("audio.mp3", await fetchFile(audioFile));
 
-  const concatContent = normClipNames.map(f => `file '${f}'`).join("\n");
+  const concatContent = clipNames.map(f => `file '${f}'`).join("\n");
   await ffmpeg.writeFile("concat.txt", concatContent);
 
   const captionFilters = footageSegments
@@ -205,7 +185,7 @@ export async function compileVideo({ footageSegments, audioFile, onProgress }) {
       return `drawtext=fontcolor=white:fontsize=20:borderw=1:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2+80:text='${wrapped}':enable='between(t\\,${seg.start}\\,${seg.end})'`;
     });
 
-  const vf = `scale=${normW}:${normH},${captionFilters.join(",")}`;
+  const vf = `scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=24${captionFilters.length ? "," + captionFilters.join(",") : ""}`;
 
   await ffmpeg.exec([
     "-f", "concat", "-safe", "0", "-i", "concat.txt",
@@ -219,11 +199,11 @@ export async function compileVideo({ footageSegments, audioFile, onProgress }) {
     "-movflags", "+faststart",
     "-y",
     "output.mp4",
-  ]);
+  ], 0);
 
   const data = await ffmpeg.readFile("output.mp4");
 
-  for (const f of normClipNames) await ffmpeg.deleteFile(f);
+  for (const f of clipNames) await ffmpeg.deleteFile(f);
   await ffmpeg.deleteFile("audio.mp3");
   await ffmpeg.deleteFile("concat.txt");
   await ffmpeg.deleteFile("output.mp4");
