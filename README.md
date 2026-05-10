@@ -3,5 +3,5 @@ https://blazfxx.github.io/multimedia-hackathon/
 
 TODO:
 * Move ffmpeg to vps or smth to make faster instead of using wasm version
-* Switch to blazeapi or smth to make the key words faster
+* Find way to raise ai rate limits (for chat, switch to blaze api or smth idk about the stt)
 * Design Frontend
