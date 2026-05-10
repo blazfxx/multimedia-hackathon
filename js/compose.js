@@ -92,12 +92,11 @@ class FFmpeg {
     else if (event === "progress") this.#progressHandlers = this.#progressHandlers.filter(h => h !== handler);
   }
 
-  async load({ coreURL, wasmURL, classWorkerURL } = {}, { signal } = {}) {
-    if (!this.#worker) {
-      this.#worker = new Worker(classWorkerURL, { type: "module" });
-      this.#onMessage();
-    }
-    return this.#send({ type: MsgType.LOAD, data: { coreURL, wasmURL } }, undefined, signal);
+  async load({ coreURL, wasmURL, workerURL } = {}, { signal } = {}) {
+    const classWorkerURL = await toBlobURL(WORKER_CDN, "text/javascript");
+    this.#worker = new Worker(classWorkerURL);
+    this.#onMessage();
+    return this.#send({ type: MsgType.LOAD, data: { coreURL, wasmURL, workerURL } }, undefined, signal);
   }
 
   exec(args, timeout = -1, { signal } = {}) {
@@ -130,12 +129,9 @@ export async function initFFmpeg(onLog) {
   ffmpeg = new FFmpeg();
   if (onLog) ffmpeg.on("log", ({ message }) => onLog(message));
 
-  const classWorkerURL = await toBlobURL(WORKER_CDN, "text/javascript");
-
   await ffmpeg.load({
-    coreURL: await toBlobURL(`${CORE_CDN}/ffmpeg-core.js`, "text/javascript"),
-    wasmURL: await toBlobURL(`${CORE_CDN}/ffmpeg-core.wasm`, "application/wasm"),
-    classWorkerURL,
+    coreURL: `${CORE_CDN}/ffmpeg-core.js`,
+    wasmURL: `${CORE_CDN}/ffmpeg-core.wasm`,
   });
   loaded = true;
 }
