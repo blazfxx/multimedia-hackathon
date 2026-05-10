@@ -12,49 +12,91 @@ h2 { margin-bottom: 8px; }
 .seg-row { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid #eee; }
 .seg-row .ts { min-width: 90px; color: #666; font-size: 0.85em; }
 .seg-row .seg-text { flex: 1; }
+.footage-grid { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.footage-card { border: 1px solid #ddd; border-radius: 4px; overflow: hidden; width: 180px; }
+.footage-card img { width: 100%; height: 100px; object-fit: cover; }
+.footage-card .info { padding: 4px; font-size: 0.8em; }
+.progress-bar { width: 100%; height: 20px; background: #eee; border-radius: 4px; overflow: hidden; margin: 8px 0; }
+.progress-fill { height: 100%; background: #4a9; transition: width 0.3s; }
 button { margin-right: 4px; }
 p { margin: 4px 0; }
+video { width: 100%; max-width: 640px; margin: 8px 0; }
 </style>
 </head>
 <body>
 <h1>AI Demo</h1>
 
 <section>
-  <h2>Transcription</h2>
-  <div id="transcript-results" class="box"></div>
-  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-    <input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
-    <button id="rec-btn" title="Record voice">&#127908;</button>
-    <button id="clear-trans-btn">Clear</button>
-  </div>
-  <p id="trans-status"></p>
+<h2>Transcription</h2>
+<div id="transcript-results" class="box"></div>
+<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+<input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
+<button id="rec-btn" title="Record voice">&#127908;</button>
+<button id="clear-trans-btn">Clear</button>
+</div>
+<p id="trans-status"></p>
 </section>
 
 <hr>
 
 <section>
-  <h2>Stock Footage Keywords</h2>
-  <div id="keywords-results" class="box"></div>
-  <button id="gen-kw-btn" disabled>Generate Keywords</button>
-  <p id="kw-status"></p>
+<h2>Stock Footage Keywords</h2>
+<div id="keywords-results" class="box"></div>
+<button id="gen-kw-btn" disabled>Generate Keywords</button>
+<p id="kw-status"></p>
+</section>
+
+<hr>
+
+<section>
+<h2>Stock Footage</h2>
+<div id="footage-grid" class="footage-grid"></div>
+<button id="search-footage-btn" disabled>Search Footage</button>
+<p id="footage-status"></p>
+</section>
+
+<hr>
+
+<section>
+<h2>Compile Video</h2>
+<button id="load-ffmpeg-btn">Load FFmpeg (~31 MB)</button>
+<button id="compile-btn" disabled>Compile Video</button>
+<div class="progress-bar"><div id="compile-progress" class="progress-fill" style="width:0%"></div></div>
+<p id="compile-status"></p>
+<video id="output-video" controls style="display:none"></video>
+<a id="download-link" style="display:none" download="output.mp4">Download Video</a>
 </section>
 
 <script type="module">
-import { isSpeechSupported, listen, transcribeFile, saveTranscription } from "./js/transcribe.js?v=8";
-import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=8";
+import { isSpeechSupported, listen, transcribeFile, saveTranscription } from "./js/transcribe.js?v=10";
+import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=10";
+import { parseKeywords, searchFootageForSegments, downloadVideo } from "./js/footage.js?v=10";
+import { initFFmpeg, compileVideo } from "./js/compose.js?v=10";
 
 const audioFile = document.getElementById("audio-file");
 const recBtn = document.getElementById("rec-btn");
 const clearTransBtn = document.getElementById("clear-trans-btn");
 const transStatus = document.getElementById("trans-status");
 const transcriptResults = document.getElementById("transcript-results");
-
 const genKwBtn = document.getElementById("gen-kw-btn");
 const kwStatus = document.getElementById("kw-status");
 const keywordsResults = document.getElementById("keywords-results");
+const searchFootageBtn = document.getElementById("search-footage-btn");
+const footageGrid = document.getElementById("footage-grid");
+const footageStatus = document.getElementById("footage-status");
+const loadFfmpegBtn = document.getElementById("load-ffmpeg-btn");
+const compileBtn = document.getElementById("compile-btn");
+const compileProgress = document.getElementById("compile-progress");
+const compileStatus = document.getElementById("compile-status");
+const outputVideo = document.getElementById("output-video");
+const downloadLink = document.getElementById("download-link");
 
 let lastSegments = null;
 let lastDuration = null;
+let lastAudioFile = null;
+let lastRawKeywords = "";
+let lastFootageResults = null;
+let ffmpegLoaded = false;
 
 if (!isSpeechSupported()) {
   recBtn.disabled = true;
@@ -80,6 +122,7 @@ function renderSegments(segments, duration) {
 audioFile.addEventListener("change", async () => {
   const file = audioFile.files[0];
   if (!file) return;
+  lastAudioFile = file;
   transStatus.textContent = "Transcribing file...";
   audioFile.disabled = true;
   try {
@@ -118,10 +161,16 @@ recBtn.addEventListener("click", async () => {
 clearTransBtn.addEventListener("click", () => {
   transcriptResults.innerHTML = "";
   keywordsResults.innerHTML = "";
+  footageGrid.innerHTML = "";
   localStorage.removeItem("transcriptions");
   lastSegments = null;
   lastDuration = null;
+  lastAudioFile = null;
+  lastRawKeywords = "";
+  lastFootageResults = null;
   genKwBtn.disabled = true;
+  searchFootageBtn.disabled = true;
+  compileBtn.disabled = true;
 });
 
 genKwBtn.addEventListener("click", async () => {
@@ -136,12 +185,100 @@ genKwBtn.addEventListener("click", async () => {
       keywordsResults.scrollTop = keywordsResults.scrollHeight;
     });
     keywordsResults.textContent = raw;
+    lastRawKeywords = raw;
     kwStatus.textContent = `Each segment = 15% of total audio (${fmt(lastDuration)})`;
+    searchFootageBtn.disabled = false;
   } catch (err) {
     keywordsResults.textContent = err.message;
     kwStatus.textContent = "";
   }
   genKwBtn.disabled = false;
+});
+
+searchFootageBtn.addEventListener("click", async () => {
+  if (!lastRawKeywords) return;
+  const parsed = parseKeywords(lastRawKeywords);
+  if (!parsed.length) { footageStatus.textContent = "No segments parsed from keywords."; return; }
+  const footageSegs = buildFootageSegments(lastSegments, lastDuration);
+  searchFootageBtn.disabled = true;
+  footageStatus.textContent = "Searching stock footage...";
+  footageGrid.innerHTML = "";
+  try {
+    lastFootageResults = await searchFootageForSegments(parsed, 1);
+    for (const seg of lastFootageResults) {
+      if (!seg.videos.length) continue;
+      const v = seg.videos[0];
+      const card = document.createElement("div");
+      card.className = "footage-card";
+      card.innerHTML = `<img src="${v.image}" alt="footage"><div class="info">Seg ${seg.index}: ${seg.keywords.join(", ")}</div>`;
+      footageGrid.appendChild(card);
+    }
+    footageStatus.textContent = `Found ${lastFootageResults.filter(s => s.videos.length).length} clips`;
+    if (ffmpegLoaded) compileBtn.disabled = false;
+  } catch (err) {
+    footageStatus.textContent = err.message;
+  }
+  searchFootageBtn.disabled = false;
+});
+
+loadFfmpegBtn.addEventListener("click", async () => {
+  loadFfmpegBtn.disabled = true;
+  compileStatus.textContent = "Loading FFmpeg core (~31 MB)...";
+  try {
+    await initFFmpeg((msg) => { compileStatus.textContent = msg.slice(0, 80); });
+    ffmpegLoaded = true;
+    loadFfmpegBtn.textContent = "FFmpeg Loaded";
+    if (lastFootageResults) compileBtn.disabled = false;
+    compileStatus.textContent = "FFmpeg ready";
+  } catch (err) {
+    compileStatus.textContent = "FFmpeg load failed: " + err.message;
+    loadFfmpegBtn.disabled = false;
+  }
+});
+
+compileBtn.addEventListener("click", async () => {
+  if (!lastFootageResults || !lastAudioFile || !lastSegments) return;
+  compileBtn.disabled = true;
+  compileProgress.style.width = "0%";
+  compileStatus.textContent = "Downloading stock videos...";
+  const footageSegs = buildFootageSegments(lastSegments, lastDuration);
+  const merged = [];
+  for (let i = 0; i < footageSegs.length; i++) {
+    const match = lastFootageResults.find(f => f.index === i + 1);
+    const videoEntry = match?.videos?.[0];
+    let videoData = null;
+    if (videoEntry?.videoUrl) {
+      try {
+        videoData = await downloadVideo(videoEntry.videoUrl);
+      } catch (e) { /* skip */ }
+    }
+    merged.push({ ...footageSegs[i], videoData });
+  }
+  const withVideo = merged.filter(s => s.videoData);
+  if (!withVideo.length) {
+    compileStatus.textContent = "No stock videos downloaded.";
+    compileBtn.disabled = false;
+    return;
+  }
+  compileStatus.textContent = "Compiling video...";
+  try {
+    const blob = await compileVideo({
+      footageSegments: withVideo,
+      audioFile: lastAudioFile,
+      onProgress: (p) => {
+        compileProgress.style.width = `${Math.round(p * 100)}%`;
+      }
+    });
+    const url = URL.createObjectURL(blob);
+    outputVideo.src = url;
+    outputVideo.style.display = "block";
+    downloadLink.href = url;
+    downloadLink.style.display = "inline";
+    compileStatus.textContent = "Done!";
+  } catch (err) {
+    compileStatus.textContent = "Compile failed: " + err.message;
+  }
+  compileBtn.disabled = false;
 });
 
 function escHtml(s) {
