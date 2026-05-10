@@ -1,5 +1,5 @@
-const CORE_BASE = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
-const FFMPEG_BASE = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd";
+const CORE_BASE = "./ffmpeg";
+const FFMPEG_BASE = "./ffmpeg";
 
 let ffmpeg = null;
 let loaded = false;
@@ -32,7 +32,7 @@ export async function initFFmpeg(onLog) {
       const s = document.createElement("script");
       s.src = `${FFMPEG_BASE}/ffmpeg.js`;
       s.onload = resolve;
-      s.onerror = () => reject(new Error(`Failed to load ${FFMPEG_BASE}/ffmpeg.js`));
+      s.onerror = () => reject(new Error(`Failed to load ffmpeg.js`));
       document.head.appendChild(s);
     });
   }
