@@ -1,4 +1,5 @@
-const CORE_BASE = "./ffmpeg";
+const CORE_CDN = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+const WORKER_CDN = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js";
 
 let ffmpeg = null;
 let loaded = false;
@@ -23,26 +24,117 @@ function fetchFile(data) {
   return Promise.resolve(new Uint8Array());
 }
 
+const MsgType = {
+  LOAD: "LOAD", EXEC: "EXEC", WRITE_FILE: "WRITE_FILE", READ_FILE: "READ_FILE",
+  DELETE_FILE: "DELETE_FILE", RENAME: "RENAME", CREATE_DIR: "CREATE_DIR",
+  LIST_DIR: "LIST_DIR", DELETE_DIR: "DELETE_DIR", ERROR: "ERROR",
+  DOWNLOAD: "DOWNLOAD", PROGRESS: "PROGRESS", LOG: "LOG",
+  MOUNT: "MOUNT", UNMOUNT: "UNMOUNT",
+};
+
+let _id = 0;
+const nextId = () => _id++;
+
+class FFmpeg {
+  #worker = null;
+  #resolvers = {};
+  #rejecters = {};
+  #logHandlers = [];
+  #progressHandlers = [];
+  loaded = false;
+
+  #onMessage = () => {
+    this.#worker.onmessage = ({ data: { id, type, data } }) => {
+      switch (type) {
+        case MsgType.LOAD:
+          this.loaded = true;
+          this.#resolvers[id]?.(data);
+          break;
+        case MsgType.EXEC: case MsgType.WRITE_FILE: case MsgType.READ_FILE:
+        case MsgType.DELETE_FILE: case MsgType.RENAME: case MsgType.CREATE_DIR:
+        case MsgType.LIST_DIR: case MsgType.DELETE_DIR: case MsgType.MOUNT:
+        case MsgType.UNMOUNT:
+          this.#resolvers[id]?.(data);
+          break;
+        case MsgType.LOG:
+          this.#logHandlers.forEach(h => h(data));
+          break;
+        case MsgType.PROGRESS:
+          this.#progressHandlers.forEach(h => h(data));
+          break;
+        case MsgType.ERROR:
+          this.#rejecters[id]?.(data);
+          break;
+      }
+      delete this.#resolvers[id];
+      delete this.#rejecters[id];
+    };
+  };
+
+  #send({ type, data }, transfer = [], signal) {
+    if (!this.#worker) return Promise.reject(new Error("ffmpeg is not loaded"));
+    return new Promise((resolve, reject) => {
+      const id = nextId();
+      this.#worker.postMessage({ id, type, data }, transfer);
+      this.#resolvers[id] = resolve;
+      this.#rejecters[id] = reject;
+      signal?.addEventListener("abort", () => reject(new DOMException(`Message #${id} aborted`, "AbortError")), { once: true });
+    });
+  }
+
+  on(event, handler) {
+    if (event === "log") this.#logHandlers.push(handler);
+    else if (event === "progress") this.#progressHandlers.push(handler);
+  }
+
+  off(event, handler) {
+    if (event === "log") this.#logHandlers = this.#logHandlers.filter(h => h !== handler);
+    else if (event === "progress") this.#progressHandlers = this.#progressHandlers.filter(h => h !== handler);
+  }
+
+  async load({ coreURL, wasmURL, classWorkerURL } = {}, { signal } = {}) {
+    if (!this.#worker) {
+      this.#worker = new Worker(classWorkerURL, { type: "module" });
+      this.#onMessage();
+    }
+    return this.#send({ type: MsgType.LOAD, data: { coreURL, wasmURL } }, undefined, signal);
+  }
+
+  exec(args, timeout = -1, { signal } = {}) {
+    return this.#send({ type: MsgType.EXEC, data: { args, timeout } }, undefined, signal);
+  }
+
+  writeFile(path, data, { signal } = {}) {
+    const transfer = data instanceof Uint8Array ? [data.buffer] : [];
+    return this.#send({ type: MsgType.WRITE_FILE, data: { path, data } }, transfer, signal);
+  }
+
+  readFile(path, encoding = "binary", { signal } = {}) {
+    return this.#send({ type: MsgType.READ_FILE, data: { path, encoding } }, undefined, signal);
+  }
+
+  deleteFile(path, { signal } = {}) {
+    return this.#send({ type: MsgType.DELETE_FILE, data: { path } }, undefined, signal);
+  }
+
+  terminate() {
+    this.#worker?.terminate();
+    this.#worker = null;
+    this.loaded = false;
+  }
+}
+
 export async function initFFmpeg(onLog) {
   if (loaded) return;
 
-  let FFmpeg = window.FFmpegWASM?.FFmpeg;
-  if (!FFmpeg) {
-    await new Promise(r => setTimeout(r, 500));
-    FFmpeg = window.FFmpegWASM?.FFmpeg;
-  }
-  if (!FFmpeg) throw new Error("FFmpegWASM not found on window. Make sure ffmpeg.js is loaded.");
   ffmpeg = new FFmpeg();
   if (onLog) ffmpeg.on("log", ({ message }) => onLog(message));
 
-  const classWorkerURL = await toBlobURL(
-    `${CORE_BASE}/814.ffmpeg.js`,
-    "text/javascript"
-  );
+  const classWorkerURL = await toBlobURL(WORKER_CDN, "text/javascript");
 
   await ffmpeg.load({
-    coreURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, "text/javascript"),
-    wasmURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, "application/wasm"),
+    coreURL: await toBlobURL(`${CORE_CDN}/ffmpeg-core.js`, "text/javascript"),
+    wasmURL: await toBlobURL(`${CORE_CDN}/ffmpeg-core.wasm`, "application/wasm"),
     classWorkerURL,
   });
   loaded = true;

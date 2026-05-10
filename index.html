@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Demo</title>
-  <script src="./ffmpeg/ffmpeg.js"></script>
+  
   <style>
 body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 16px; }
 section { margin-bottom: 24px; }
@@ -64,7 +64,7 @@ video { width: 100%; max-width: 640px; margin: 8px 0; }
 import { isSpeechSupported, listen, transcribeFile, saveTranscription } from "./js/transcribe.js?v=11";
 import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=11";
 import { parseKeywords, searchFootageForSegments, downloadVideo } from "./js/footage.js?v=11";
-import { initFFmpeg, compileVideo } from "./js/compose.js?v=13";
+import { initFFmpeg, compileVideo } from "./js/compose.js?v=14";
 
 const audioFile = document.getElementById("audio-file");
 const recBtn = document.getElementById("rec-btn");
