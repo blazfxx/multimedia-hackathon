@@ -26,7 +26,12 @@ function fetchFile(data) {
 export async function initFFmpeg(onLog) {
   if (loaded) return;
 
-  const { FFmpeg } = window.FFmpegWASM;
+  let FFmpeg = window.FFmpegWASM?.FFmpeg;
+  if (!FFmpeg) {
+    await new Promise(r => setTimeout(r, 500));
+    FFmpeg = window.FFmpegWASM?.FFmpeg;
+  }
+  if (!FFmpeg) throw new Error("FFmpegWASM not found on window. Make sure ffmpeg.js is loaded.");
   ffmpeg = new FFmpeg();
   if (onLog) ffmpeg.on("log", ({ message }) => onLog(message));
 
