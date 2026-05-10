@@ -136,63 +136,98 @@ export async function initFFmpeg(onLog) {
   loaded = true;
 }
 
+function escapeDrawtext(str) {
+  return str
+    .replace(/\\/g, "\\\\\\\\")
+    .replace(/'/g, "")
+    .replace(/:/g, "\\\\:")
+    .replace(/%/g, "%%")
+    .replace(/\[/g, "")
+    .replace(/\]/g, "")
+    .replace(/\n/g, " ");
+}
+
 export async function compileVideo({ footageSegments, audioFile, onProgress }) {
-  if (!loaded) throw new Error("FFmpeg not loaded. Call initFFmpeg() first.");
+  if (!loaded) throw new Error("FFmpeg not loaded.");
 
   ffmpeg.on("progress", ({ progress }) => {
     if (onProgress) onProgress(Math.max(0, Math.min(1, progress)));
   });
 
   let idx = 0;
-  const filenames = [];
+  const rawClipNames = [];
+  const normClipNames = [];
+
   for (const seg of footageSegments) {
     if (!seg.videoData) continue;
-    const name = `clip${idx}.mp4`;
-    await ffmpeg.writeFile(name, new Uint8Array(seg.videoData));
-    filenames.push(name);
+    const rawName = `raw${idx}.mp4`;
+    const normName = `norm${idx}.mp4`;
+    await ffmpeg.writeFile(rawName, new Uint8Array(seg.videoData));
+    rawClipNames.push(rawName);
+    normClipNames.push(normName);
     idx++;
+  }
+
+  if (!normClipNames.length) throw new Error("No video clips to compile.");
+
+  const normW = 1280;
+  const normH = 720;
+  const normFps = 24;
+
+  for (let i = 0; i < rawClipNames.length; i++) {
+    await ffmpeg.exec([
+      "-i", rawClipNames[i],
+      "-vf", `scale=${normW}:${normH}:force_original_aspect_ratio=decrease,pad=${normW}:${normH}:(ow-iw)/2:(oh-ih)/2`,
+      "-r", String(normFps),
+      "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+      "-an",
+      "-y",
+      normClipNames[i],
+    ]);
+    await ffmpeg.deleteFile(rawClipNames[i]);
   }
 
   await ffmpeg.writeFile("audio.mp3", await fetchFile(audioFile));
 
-  const concatContent = filenames.map(f => `file '${f}'`).join("\n");
+  const concatContent = normClipNames.map(f => `file '${f}'`).join("\n");
   await ffmpeg.writeFile("concat.txt", concatContent);
 
-  const filterParts = footageSegments.map((seg) => {
-    const escaped = seg.text
-      .replace(/\\/g, "\\\\\\\\")
-      .replace(/:/g, "\\\\:")
-      .replace(/'/g, "\\\\'")
-      .replace(/%/g, "%%")
-      .replace(/\n/g, " ");
-    const charsPerLine = 35;
-    const lines = [];
-    for (let c = 0; c < escaped.length; c += charsPerLine) {
-      lines.push(escaped.slice(c, c + charsPerLine));
-    }
-    const text = lines.join("%{eif\\:n\\:2}\\n");
-    return `drawtext=fontcolor=white:fontsize=18:borderw=1:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2+80:text='${text}':enable='between(t,${seg.start},${seg.end})'`;
-  });
+  const captionFilters = footageSegments
+    .filter(seg => seg.videoData && seg.text)
+    .map((seg) => {
+      const t = escapeDrawtext(seg.text);
+      const charsPerLine = 35;
+      const lines = [];
+      for (let c = 0; c < t.length; c += charsPerLine) {
+        lines.push(t.slice(c, c + charsPerLine));
+      }
+      const wrapped = lines.join("\\n");
+      return `drawtext=fontcolor=white:fontsize=20:borderw=1:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2+80:text='${wrapped}':enable='between(t\\,${seg.start}\\,${seg.end})'`;
+    });
 
-  const drawtext = filterParts.join(",");
+  const vf = `scale=${normW}:${normH},${captionFilters.join(",")}`;
 
   await ffmpeg.exec([
     "-f", "concat", "-safe", "0", "-i", "concat.txt",
     "-i", "audio.mp3",
-    "-vf", `scale=1280:-2,${drawtext}`,
+    "-vf", vf,
+    "-af", "aformat=sample_fmts=fltp",
     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
     "-c:a", "aac", "-b:a", "128k",
+    "-vsync", "cfr",
     "-shortest",
     "-movflags", "+faststart",
-    "output.mp4"
+    "-y",
+    "output.mp4",
   ]);
 
   const data = await ffmpeg.readFile("output.mp4");
 
-  for (const f of filenames) await ffmpeg.deleteFile(f);
+  for (const f of normClipNames) await ffmpeg.deleteFile(f);
   await ffmpeg.deleteFile("audio.mp3");
   await ffmpeg.deleteFile("concat.txt");
   await ffmpeg.deleteFile("output.mp4");
 
-  return new Blob([data.buffer], { type: "video/mp4" });
+  const copy = new Uint8Array(data).buffer;
+  return new Blob([copy], { type: "video/mp4" });
 }
