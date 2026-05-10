@@ -28,17 +28,27 @@ self.onmessage = async ({ data: { id, type, data } }) => {
             try {
               eval(coreText);
             } catch (e) {
-              throw new Error("failed to eval ffmpeg-core.js: " + e.message);
+              throw new Error("failed to eval ffmpeg-core.js: " + e.message + "\n" + e.stack);
             }
             if (typeof self.createFFmpegCore !== "function") {
               throw new Error("createFFmpegCore not found after eval");
             }
           }
+          const wasmBinaryBytes = wasmBinary ? new Uint8Array(wasmBinary) : null;
           const moduleOpts = {
-            mainScriptUrlOrBlob: coreURL,
-            wasmBinary: wasmBinary ? new Uint8Array(wasmBinary) : undefined,
-            workerOptions: { type: "module" },
+            mainScriptUrlOrBlob: `${coreURL}#${btoa(JSON.stringify({ wasmURL, workerURL: coreURL.replace(/.js$/g, ".worker.js") }))}`,
           };
+          if (wasmBinaryBytes) {
+            moduleOpts.wasmBinary = wasmBinaryBytes;
+            moduleOpts.instantiateWasm = (imports, callback) => {
+              WebAssembly.instantiate(wasmBinaryBytes, imports).then(result => {
+                callback(result.instance);
+              }).catch(e => {
+                self.postMessage({ type: MsgType.ERROR, data: `instantiateWasm failed: ${e}` });
+              });
+              return {};
+            };
+          }
           try {
             core = await self.createFFmpegCore(moduleOpts);
           } catch (e) {
