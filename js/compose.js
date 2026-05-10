@@ -98,7 +98,7 @@ class FFmpeg {
     else if (event === "progress") this.#progressHandlers = this.#progressHandlers.filter(h => h !== handler);
   }
 
-  async load({ coreURL, wasmURL, wasmBinary } = {}, { signal } = {}) {
+  async load({ coreURL, wasmURL, coreText, wasmBinary } = {}, { signal } = {}) {
     log(`Creating Worker from ${WORKER_URL}`);
     this.#worker = new Worker(WORKER_URL);
     this.#worker.onerror = (e) => {
@@ -106,9 +106,9 @@ class FFmpeg {
     };
     log("Worker created, attaching onMessage");
     this.#onMessage();
-    log(`Sending LOAD: coreURL=${coreURL} wasmURL=${wasmURL} wasmBinary=${wasmBinary ? wasmBinary.byteLength + ' bytes' : 'none'}`);
+    log(`Sending LOAD: coreText=${coreText ? coreText.length + ' chars' : 'none'} wasmBinary=${wasmBinary ? wasmBinary.byteLength + ' bytes' : 'none'}`);
     const transfer = wasmBinary ? [wasmBinary] : [];
-    return this.#send({ type: MsgType.LOAD, data: { coreURL, wasmURL, wasmBinary } }, transfer, signal);
+    return this.#send({ type: MsgType.LOAD, data: { coreURL, wasmURL, coreText, wasmBinary } }, transfer, signal);
   }
 
   exec(args, timeout = 0, { signal } = {}) {
@@ -143,6 +143,19 @@ export async function initFFmpeg(onLog) {
   ffmpeg = new FFmpeg();
   if (onLog) ffmpeg.on("log", ({ message }) => onLog(message));
 
+  let coreText;
+  try {
+    log("Pre-fetching ffmpeg-core.js from proxy...");
+    const coreRes = await fetch(CORE_URL);
+    log(`Core JS fetch: status=${coreRes.status}`);
+    if (!coreRes.ok) throw new Error(`Core JS fetch failed: HTTP ${coreRes.status}`);
+    coreText = await coreRes.text();
+    log(`Core JS: ${coreText.length} chars`);
+  } catch (err) {
+    log(`Core JS pre-fetch FAILED: ${err.message}`);
+    throw err;
+  }
+
   let wasmBinary;
   try {
     log("Pre-fetching WASM binary from proxy...");
@@ -157,10 +170,11 @@ export async function initFFmpeg(onLog) {
   }
 
   try {
-    log("Loading FFmpeg (custom worker, core via proxy, wasmBinary pre-fetched)...");
+    log("Loading FFmpeg (custom worker, core+wasm pre-fetched)...");
     await ffmpeg.load({
       coreURL: CORE_URL,
       wasmURL: WASM_URL,
+      coreText,
       wasmBinary,
     });
     loaded = true;

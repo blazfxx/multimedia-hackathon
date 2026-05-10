@@ -25,10 +25,13 @@ self.onmessage = async ({ data: { id, type, data } }) => {
     if (type !== MsgType.LOAD && !core) throw new Error("ffmpeg is not loaded");
     switch (type) {
       case MsgType.LOAD:
-        result = await (async ({ coreURL, wasmURL, wasmBinary }) => {
+        result = await (async ({ coreURL, wasmURL, coreText, wasmBinary }) => {
           if (!core) {
             try {
-              importScripts(coreURL);
+              const blob = new Blob([coreText], { type: "text/javascript" });
+              const blobURL = URL.createObjectURL(blob);
+              importScripts(blobURL);
+              URL.revokeObjectURL(blobURL);
             } catch (e) {
               throw new Error("failed to import ffmpeg-core.js: " + e.message);
             }
