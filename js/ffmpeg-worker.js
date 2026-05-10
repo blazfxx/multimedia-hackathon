@@ -28,12 +28,11 @@ self.onmessage = async ({ data: { id, type, data } }) => {
         result = await (async ({ coreURL, wasmURL, coreText, wasmBinary }) => {
           if (!core) {
             try {
-              const blob = new Blob([coreText], { type: "text/javascript" });
-              const blobURL = URL.createObjectURL(blob);
-              importScripts(blobURL);
-              URL.revokeObjectURL(blobURL);
+              self.Module = self.Module || {};
+              self.Module.mainScriptUrlOrBlob = coreURL;
+              eval(coreText);
             } catch (e) {
-              throw new Error("failed to import ffmpeg-core.js: " + e.message);
+              throw new Error("failed to eval ffmpeg-core.js: " + e.message);
             }
           }
           const moduleOpts = {
