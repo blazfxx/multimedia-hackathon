@@ -129,12 +129,10 @@ export async function initFFmpeg(onLog) {
   ffmpeg = new FFmpeg();
   if (onLog) ffmpeg.on("log", ({ message }) => onLog(message));
 
-  const [coreURL, wasmURL] = await Promise.all([
-    toBlobURL(`${CORE_CDN}/ffmpeg-core.js`, "text/javascript"),
-    toBlobURL(`${CORE_CDN}/ffmpeg-core.wasm`, "application/wasm"),
-  ]);
-
-  await ffmpeg.load({ coreURL, wasmURL });
+  await ffmpeg.load({
+    coreURL: `${CORE_CDN}/ffmpeg-core.js`,
+    wasmURL: `${CORE_CDN}/ffmpeg-core.wasm`,
+  });
   loaded = true;
 }
 
