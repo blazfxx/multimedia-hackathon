@@ -1,3 +1,6 @@
+const FFMPEG_CORE_BASE = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+const FFMPEG_WORKER_URL = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js";
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -16,6 +19,15 @@ export default {
     }
     if (path === "/pexels/proxy" && request.method === "GET") {
       return proxyPexelsVideo(request, url);
+    }
+    if (path === "/ffmpeg/814.ffmpeg.js" && request.method === "GET") {
+      return proxyFFmpegFile(request, FFMPEG_WORKER_URL, "text/javascript");
+    }
+    if (path === "/ffmpeg/ffmpeg-core.js" && request.method === "GET") {
+      return proxyFFmpegFile(request, `${FFMPEG_CORE_BASE}/ffmpeg-core.js`, "text/javascript");
+    }
+    if (path === "/ffmpeg/ffmpeg-core.wasm" && request.method === "GET") {
+      return proxyFFmpegFile(request, `${FFMPEG_CORE_BASE}/ffmpeg-core.wasm`, "application/wasm");
     }
     return new Response("Not found", { status: 404 });
   }
@@ -36,6 +48,32 @@ function corsHeaders(request) {
     "Cross-Origin-Resource-Policy": "cross-origin",
     "Vary": "Origin",
   };
+}
+
+async function proxyFFmpegFile(request, upstreamUrl, contentType) {
+  const rangeHeader = request.headers.get("Range");
+  const fetchOpts = { headers: {} };
+  if (rangeHeader) {
+    fetchOpts.headers["Range"] = rangeHeader;
+  }
+  const res = await fetch(upstreamUrl, fetchOpts);
+  const headers = {
+    "Content-Type": contentType,
+    "Cross-Origin-Resource-Policy": "cross-origin",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Accept-Ranges": "bytes",
+    "Access-Control-Allow-Origin": corsHeaders(request)["Access-Control-Allow-Origin"],
+    "Access-Control-Expose-Headers": "Content-Range, Content-Length",
+    "Vary": "Origin",
+  };
+  if (res.headers.has("Content-Range")) {
+    headers["Content-Range"] = res.headers.get("Content-Range");
+  }
+  if (res.headers.has("Content-Length")) {
+    headers["Content-Length"] = res.headers.get("Content-Length");
+  }
+  return new Response(res.body, { status: res.status, headers });
 }
 
 async function proxyGroq(request, env) {

@@ -32,7 +32,7 @@ a[download]{display:inline-block;margin:8px 0}
 </head>
 <body>
 <h1>AI Video Compiler</h1>
-<p class="ver">v1.0.0</p>
+<p class="ver">v1.1.0</p>
 <div class="controls">
 <input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
 <button id="start-btn" disabled>Start</button>
@@ -53,7 +53,7 @@ a[download]{display:inline-block;margin:8px 0}
 </section>
 <section>
 <h2>Output</h2>
-<p id="ffmpeg-status">Loading FFmpeg (~31 MB)...</p>
+<p id="ffmpeg-status">Loading FFmpeg from proxy...</p>
 <video id="output-video" controls style="display:none"></video>
 <a id="download-link" style="display:none" download="output.mp4">Download Video</a>
 </section>
@@ -61,7 +61,7 @@ a[download]{display:inline-block;margin:8px 0}
 import { transcribeFile, saveTranscription } from "./js/transcribe.js?v=12";
 import { buildFootageSegments, generateKeywords, fmt } from "./js/keywords.js?v=12";
 import { parseKeywords, searchFootageForSegments, downloadVideo } from "./js/footage.js?v=12";
-import { initFFmpeg, compileVideo } from "./js/compose.js?v=22";
+import { initFFmpeg, compileVideo } from "./js/compose.js?v=30";
 const audioFile = document.getElementById("audio-file");
 const startBtn = document.getElementById("start-btn");
 const statusEl = document.getElementById("status");
