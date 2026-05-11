@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FFmpeg Worker Test</title>
+<script src="coi-serviceworker.js"></script>
+<style>
+body{font-family:monospace;max-width:900px;margin:0 auto;padding:16px;white-space:pre-wrap;font-size:14px}
+.pass{color:green}.fail{color:red}.info{color:#555}
+</style>
+</head>
+<body>
+<h2>FFmpeg Worker Diagnostic Test</h2>
+<div id="log"></div>
+<script>
+const logEl = document.getElementById("log");
+function log(msg, cls) {
+  const d = document.createElement("div");
+  d.className = cls || "info";
+  d.textContent = msg;
+  logEl.appendChild(d);
+  console.log(msg);
+}
+
+const PROXY = "https://api-proxy.evan-zhao140.workers.dev";
+const CORE_URL = `${PROXY}/ffmpeg/ffmpeg-core.js`;
+const WASM_URL = `${PROXY}/ffmpeg/ffmpeg-core.wasm`;
+
+(async () => {
+  log("=== Phase 0: Environment ===");
+  log(`crossOriginIsolated = ${window.crossOriginIsolated}`, window.crossOriginIsolated ? "pass" : "fail");
+  log(`UA = ${navigator.userAgent}`);
+  log("");
+
+  log("=== Phase 1: Fetch core.js from proxy ===");
+  try {
+    const r = await fetch(CORE_URL);
+    log(`HTTP ${r.status} ${r.statusText}`, r.ok ? "pass" : "fail");
+    log(`Content-Type: ${r.headers.get("content-type")}`);
+    const coreText = await r.text();
+    log(`Length: ${coreText.length} chars`, coreText.length > 100000 ? "pass" : "fail");
+    log(`Has createFFmpegCore: ${coreText.includes("createFFmpegCore")}`);
+
+    log("\n=== Phase 2: Fetch core.wasm from proxy ===");
+    const wr = await fetch(WASM_URL);
+    log(`HTTP ${wr.status} ${wr.statusText}`, wr.ok ? "pass" : "fail");
+    const wasmBuf = await wr.arrayBuffer();
+    log(`WASM size: ${wasmBuf.byteLength} bytes`, wasmBuf.byteLength > 30000000 ? "pass" : "fail");
+
+    log("\n=== Phase 3: Create minimal worker (no core.js) ===");
+    const minWorkerCode = `self.postMessage("MIN_WORKER_ALIVE");`;
+    const minBlob = new Blob([minWorkerCode], { type: "application/javascript" });
+    const minURL = URL.createObjectURL(minBlob);
+    const minW = new Worker(minURL);
+    const minResult = await new Promise((resolve, reject) => {
+      minW.onerror = (e) => resolve(`onerror: message=${e.message} lineno=${e.lineno}`);
+      minW.onmessage = (e) => resolve(`onmessage: ${e.data}`);
+      setTimeout(() => resolve("TIMEOUT 5s"), 5000);
+    });
+    log(`Result: ${minResult}`, minResult.includes("ALIVE") ? "pass" : "fail");
+    minW.terminate();
+
+    log("\n=== Phase 4: Create worker from file (same-origin) ===");
+    const fileWorker = new Worker("/js/ffmpeg-worker.js");
+    const fileResult = await new Promise((resolve, reject) => {
+      fileWorker.onerror = (e) => resolve(`onerror: message=${e.message} filename=${e.filename} lineno=${e.lineno} colno=${e.colno}`);
+      fileWorker.onmessage = (e) => resolve(`onmessage: type=${e.data?.type} data=${JSON.stringify(e.data?.data)?.substring(0, 200)}`);
+      setTimeout(() => resolve("TIMEOUT 5s"), 5000);
+    });
+    log(`Result: ${fileResult}`, fileResult.includes("onmessage") ? "pass" : "fail");
+    fileWorker.terminate();
+
+    log("\n=== Phase 5: Create worker from blob URL ===");
+    const workerSrc = await (await fetch("/js/ffmpeg-worker.js")).text();
+    log(`Worker src length: ${workerSrc.length}`);
+    const blobWorker = new Blob([workerSrc], { type: "application/javascript" });
+    const blobURL = URL.createObjectURL(blobWorker);
+    const bW = new Worker(blobURL);
+    const blobResult = await new Promise((resolve, reject) => {
+      bW.onerror = (e) => resolve(`onerror: message=${e.message} filename=${e.filename} lineno=${e.lineno} colno=${e.colno}`);
+      bW.onmessage = (e) => resolve(`onmessage: type=${e.data?.type} data=${JSON.stringify(e.data?.data)?.substring(0, 200)}`);
+      setTimeout(() => resolve("TIMEOUT 5s"), 5000);
+    });
+    log(`Result: ${blobResult}`, blobResult.includes("onmessage") ? "pass" : "fail");
+    bW.terminate();
+
+    log("\n=== Phase 6: Send LOAD to blob worker ===");
+    const bW2 = new Worker(blobURL);
+    let loadResult = null;
+    let loadMessages = [];
+    bW2.onerror = (e) => {
+      loadResult = `onerror: message=${e.message} filename=${e.filename} lineno=${e.lineno}`;
+    };
+    bW2.onmessage = (e) => {
+      loadMessages.push(`type=${e.data?.type} data=${JSON.stringify(e.data?.data)?.substring(0, 300)}`);
+    };
+    bW2.postMessage({
+      id: 1, type: "LOAD",
+      data: { coreURL: CORE_URL, wasmURL: WASM_URL, coreText, wasmBinary: wasmBuf }
+    }, [wasmBuf]);
+    const loadOutcome = await new Promise((resolve) => {
+      const check = setInterval(() => {
+        if (loadResult) { clearInterval(check); resolve(loadResult); }
+        const hasLoad = loadMessages.some(m => m.includes("type=LOAD"));
+        const hasErr = loadMessages.some(m => m.includes("type=ERROR"));
+        if (hasLoad || hasErr) { clearInterval(check); resolve("messages: " + loadMessages.join(" | ")); }
+      }, 200);
+      setTimeout(() => { clearInterval(check); resolve("TIMEOUT 30s. messages: " + loadMessages.join(" | ")); }, 30000);
+    });
+    log(`LOAD outcome: ${loadOutcome}`);
+    loadMessages.forEach(m => log(`  msg: ${m}`));
+    bW2.terminate();
+
+    log("\n=== Phase 7: Main-thread eval + createFFmpegCore ===");
+    try {
+      const moduleOpts = {
+        mainScriptUrlOrBlob: CORE_URL,
+        wasmBinary: new Uint8Array(wasmBuf),
+        instantiateWasm: (imports, callback) => {
+          log("  instantiateWasm callback triggered");
+          WebAssembly.instantiate(new Uint8Array(wasmBuf), imports).then(r => {
+            log("  WebAssembly.instantiate succeeded", "pass");
+            callback(r.instance);
+          }).catch(e => {
+            log(`  WebAssembly.instantiate FAILED: ${e}`, "fail");
+          });
+          return {};
+        },
+      };
+      eval(coreText);
+      log(`typeof createFFmpegCore = ${typeof createFFmpegCore}`, typeof createFFmpegCore === "function" ? "pass" : "fail");
+      if (typeof createFFmpegCore === "function") {
+        const core = await createFFmpegCore(moduleOpts);
+        log(`createFFmpegCore returned! FS=${typeof core.FS}`, "pass");
+        core.setTimeout(0);
+        core.exec("-version");
+        log(`ffmpeg -version ret=${core.ret}`, core.ret === 0 ? "pass" : "fail");
+        core.reset();
+      }
+    } catch (e) {
+      log(`Main-thread eval/createFFmpegCore FAILED: ${e.message}\n${e.stack}`, "fail");
+    }
+
+    log("\n=== Done ===");
+  } catch (e) {
+    log(`UNEXPECTED ERROR: ${e.message}\n${e.stack}`, "fail");
+  }
+})();
+</script>
+</body>
+</html>
