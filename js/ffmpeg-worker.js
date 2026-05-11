@@ -1,23 +1,12 @@
-const MsgType = {
-  LOAD: "LOAD", EXEC: "EXEC", WRITE_FILE: "WRITE_FILE", READ_FILE: "READ_FILE",
-  DELETE_FILE: "DELETE_FILE", RENAME: "RENAME", CREATE_DIR: "CREATE_DIR",
-  LIST_DIR: "LIST_DIR", DELETE_DIR: "DELETE_DIR", ERROR: "ERROR",
-  DOWNLOAD: "DOWNLOAD", PROGRESS: "PROGRESS", LOG: "LOG",
-  MOUNT: "MOUNT", UNMOUNT: "UNMOUNT",
-};
-
+const MsgType = { LOAD: "LOAD", EXEC: "EXEC", WRITE_FILE: "WRITE_FILE", READ_FILE: "READ_FILE", DELETE_FILE: "DELETE_FILE", RENAME: "RENAME", CREATE_DIR: "CREATE_DIR", LIST_DIR: "LIST_DIR", DELETE_DIR: "DELETE_DIR", ERROR: "ERROR", DOWNLOAD: "DOWNLOAD", PROGRESS: "PROGRESS", LOG: "LOG", MOUNT: "MOUNT", UNMOUNT: "UNMOUNT" };
 let core = null;
-
 self.postMessage({ type: MsgType.LOG, data: { message: "worker script loaded" } });
-
 self.addEventListener("error", (e) => {
   self.postMessage({ type: MsgType.ERROR, data: `Worker global error: message=${e.message} filename=${e.filename} lineno=${e.lineno} colno=${e.colno}` });
 });
-
 self.addEventListener("unhandledrejection", (e) => {
   self.postMessage({ type: MsgType.ERROR, data: `Worker unhandled rejection: reason=${String(e.reason)}` });
 });
-
 self.onmessage = async ({ data: { id, type, data } }) => {
   self.postMessage({ type: MsgType.LOG, data: { message: `worker received msg type=${type} id=${id}` } });
   const transfer = [];
@@ -25,98 +14,51 @@ self.onmessage = async ({ data: { id, type, data } }) => {
   try {
     if (type !== MsgType.LOAD && !core) throw new Error("ffmpeg is not loaded");
     switch (type) {
-      case MsgType.LOAD:
-        result = await (async ({ coreURL, wasmURL, coreText, wasmBinary }) => {
-          if (!core) {
-            self.postMessage({ type: MsgType.LOG, data: { message: `eval coreText length=${coreText.length}` } });
-            try {
-              (0, eval)(coreText);
-            } catch (e) {
-              throw new Error("failed to eval ffmpeg-core.js: " + e.message + "\n" + e.stack);
-            }
-            self.postMessage({ type: MsgType.LOG, data: { message: `eval done, typeof createFFmpegCore=${typeof self.createFFmpegCore}` } });
-            if (typeof self.createFFmpegCore !== "function") {
-              throw new Error("createFFmpegCore not found after eval - typeof=" + typeof self.createFFmpegCore);
-            }
-          }
-          const wasmBinaryBytes = wasmBinary ? new Uint8Array(wasmBinary) : null;
-          self.postMessage({ type: MsgType.LOG, data: { message: `wasmBinaryBytes=${wasmBinaryBytes ? wasmBinaryBytes.byteLength : 0}` } });
-          const moduleOpts = {
-            mainScriptUrlOrBlob: `${coreURL}#${btoa(JSON.stringify({ wasmURL, workerURL: coreURL.replace(/.js$/g, ".worker.js") }))}`,
+      case MsgType.LOAD: result = await (async ({ coreURL, wasmURL, coreText, wasmBinary }) => {
+        if (!core) {
+          self.postMessage({ type: MsgType.LOG, data: { message: `eval coreText length=${coreText.length}` } });
+          try { (0, eval)(coreText); } catch (e) { throw new Error("failed to eval ffmpeg-core.js: " + e.message + "\n" + e.stack); }
+          self.postMessage({ type: MsgType.LOG, data: { message: `eval done, typeof createFFmpegCore=${typeof self.createFFmpegCore}` } });
+          if (typeof self.createFFmpegCore !== "function") throw new Error("createFFmpegCore not found after eval - typeof=" + typeof self.createFFmpegCore);
+        }
+        const wasmBinaryBytes = wasmBinary ? new Uint8Array(wasmBinary) : null;
+        self.postMessage({ type: MsgType.LOG, data: { message: `wasmBinaryBytes=${wasmBinaryBytes ? wasmBinaryBytes.byteLength : 0}` } });
+        const CDN = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+        const moduleOpts = {
+          mainScriptUrlOrBlob: `${CDN}/ffmpeg-core.js#${btoa(JSON.stringify({ wasmURL: `${CDN}/ffmpeg-core.wasm`, workerURL: `${CDN}/ffmpeg-core.worker.js` }))}`,
+        };
+        if (wasmBinaryBytes) {
+          moduleOpts.wasmBinary = wasmBinaryBytes;
+          moduleOpts.instantiateWasm = (imports, callback) => {
+            self.postMessage({ type: MsgType.LOG, data: { message: "instantiateWasm called" } });
+            WebAssembly.instantiate(wasmBinaryBytes, imports).then(result => {
+              self.postMessage({ type: MsgType.LOG, data: { message: "instantiateWasm success" } });
+              callback(result.instance);
+            }).catch(e => {
+              self.postMessage({ type: MsgType.ERROR, data: `instantiateWasm failed: ${e}` });
+            });
+            return {};
           };
-          if (wasmBinaryBytes) {
-            moduleOpts.wasmBinary = wasmBinaryBytes;
-            moduleOpts.instantiateWasm = (imports, callback) => {
-              self.postMessage({ type: MsgType.LOG, data: { message: "instantiateWasm called" } });
-              WebAssembly.instantiate(wasmBinaryBytes, imports).then(result => {
-                self.postMessage({ type: MsgType.LOG, data: { message: "instantiateWasm success" } });
-                callback(result.instance);
-              }).catch(e => {
-                self.postMessage({ type: MsgType.ERROR, data: `instantiateWasm failed: ${e}` });
-              });
-              return {};
-            };
-          }
-          self.postMessage({ type: MsgType.LOG, data: { message: "calling createFFmpegCore..." } });
-          try {
-            core = await self.createFFmpegCore(moduleOpts);
-          } catch (e) {
-            throw new Error("createFFmpegCore failed: " + e.message + "\n" + e.stack);
-          }
-          self.postMessage({ type: MsgType.LOG, data: { message: "createFFmpegCore done" } });
-          core.setLogger((msg) => self.postMessage({ type: MsgType.LOG, data: msg }));
-          core.setProgress((p) => self.postMessage({ type: MsgType.PROGRESS, data: p }));
-          return true;
-        })(data);
-        break;
-      case MsgType.EXEC:
-        result = (({ args, timeout = -1 }) => {
-          core.setTimeout(timeout);
-          core.exec(...args);
-          const ret = core.ret;
-          core.reset();
-          return ret;
-        })(data);
-        break;
-      case MsgType.WRITE_FILE:
-        result = (({ path, data: d }) => (core.FS.writeFile(path, d), true))(data);
-        break;
-      case MsgType.READ_FILE:
-        result = (({ path, encoding }) => core.FS.readFile(path, { encoding }))(data);
-        if (result instanceof Uint8Array) transfer.push(result.buffer);
-        break;
-      case MsgType.DELETE_FILE:
-        result = (({ path }) => (core.FS.unlink(path), true))(data);
-        break;
-      case MsgType.RENAME:
-        result = (({ oldPath, newPath }) => (core.FS.rename(oldPath, newPath), true))(data);
-        break;
-      case MsgType.CREATE_DIR:
-        result = (({ path }) => (core.FS.mkdir(path), true))(data);
-        break;
-      case MsgType.LIST_DIR:
-        result = (({ path }) => {
-          const entries = core.FS.readdir(path);
-          return entries.map((name) => {
-            const stat = core.FS.stat(`${path}/${name}`);
-            return { name, isDir: core.FS.isDir(stat.mode) };
-          });
-        })(data);
-        break;
-      case MsgType.DELETE_DIR:
-        result = (({ path }) => (core.FS.rmdir(path), true))(data);
-        break;
-      case MsgType.MOUNT:
-        result = (({ fsType, options, mountPoint }) => {
-          const fs = core.FS.filesystems[fsType];
-          return !!(fs && (core.FS.mount(fs, options, mountPoint), true));
-        })(data);
-        break;
-      case MsgType.UNMOUNT:
-        result = (({ mountPoint }) => (core.FS.unmount(mountPoint), true))(data);
-        break;
-      default:
-        throw new Error("unknown message type");
+        }
+        self.postMessage({ type: MsgType.LOG, data: { message: "calling createFFmpegCore..." } });
+        try { core = await self.createFFmpegCore(moduleOpts); } catch (e) { throw new Error("createFFmpegCore failed: " + e.message + "\n" + e.stack); }
+        self.postMessage({ type: MsgType.LOG, data: { message: "createFFmpegCore done" } });
+        core.setLogger((msg) => self.postMessage({ type: MsgType.LOG, data: msg }));
+        core.setProgress((p) => self.postMessage({ type: MsgType.PROGRESS, data: p }));
+        return true;
+      })(data);
+      break;
+      case MsgType.EXEC: result = (({ args, timeout = -1 }) => { core.setTimeout(timeout); core.exec(...args); const ret = core.ret; core.reset(); return ret; })(data); break;
+      case MsgType.WRITE_FILE: result = (({ path, data: d }) => (core.FS.writeFile(path, d), true))(data); break;
+      case MsgType.READ_FILE: result = (({ path, encoding }) => core.FS.readFile(path, { encoding }))(data); if (result instanceof Uint8Array) transfer.push(result.buffer); break;
+      case MsgType.DELETE_FILE: result = (({ path }) => (core.FS.unlink(path), true))(data); break;
+      case MsgType.RENAME: result = (({ oldPath, newPath }) => (core.FS.rename(oldPath, newPath), true))(data); break;
+      case MsgType.CREATE_DIR: result = (({ path }) => (core.FS.mkdir(path), true))(data); break;
+      case MsgType.LIST_DIR: result = (({ path }) => { const entries = core.FS.readdir(path); return entries.map((name) => { const stat = core.FS.stat(`${path}/${name}`); return { name, isDir: core.FS.isDir(stat.mode) }; }); })(data); break;
+      case MsgType.DELETE_DIR: result = (({ path }) => (core.FS.rmdir(path), true))(data); break;
+      case MsgType.MOUNT: result = (({ fsType, options, mountPoint }) => { const fs = core.FS.filesystems[fsType]; return !!(fs && (core.FS.mount(fs, options, mountPoint), true)); })(data); break;
+      case MsgType.UNMOUNT: result = (({ mountPoint }) => (core.FS.unmount(mountPoint), true))(data); break;
+      default: throw new Error("unknown message type");
     }
   } catch (e) {
     self.postMessage({ id, type: MsgType.ERROR, data: e.toString() });

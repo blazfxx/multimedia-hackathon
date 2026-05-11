@@ -99,10 +99,14 @@ class FFmpeg {
   }
 
   async load({ coreURL, wasmURL, coreText, wasmBinary } = {}, { signal } = {}) {
-    log(`Creating Worker from ${WORKER_URL}`);
-    this.#worker = new Worker(WORKER_URL);
+    log("Fetching worker source for blob URL...");
+    const workerSrc = await (await fetch(WORKER_URL)).text();
+    const workerBlob = new Blob([workerSrc], { type: "application/javascript" });
+    const workerBlobURL = URL.createObjectURL(workerBlob);
+    this.#worker = new Worker(workerBlobURL);
+    URL.revokeObjectURL(workerBlobURL);
     this.#worker.onerror = (e) => {
-      log(`Worker error event: ${e.message} filename=${e.filename} lineno=${e.lineno}`);
+      log(`Worker onerror: ${e.message} filename=${e.filename} lineno=${e.lineno}`);
     };
     log("Worker created, attaching onMessage");
     this.#onMessage();
