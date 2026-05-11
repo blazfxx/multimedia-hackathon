@@ -32,7 +32,7 @@ a[download]{display:inline-block;margin:8px 0}
 </head>
 <body>
 <h1>AI Video Compiler</h1>
-<p class="ver">v1.2.0</p>
+<p class="ver">v1.3.0</p>
 <div class="controls">
 <input type="file" id="audio-file" accept="audio/*,video/mp4,.mp3,.wav,.m4a,.webm,.ogg">
 <button id="start-btn" disabled>Start</button>
@@ -125,8 +125,7 @@ startBtn.addEventListener("click", async () => {
   downloadLink.style.display = "none";
   setProgress(0);
   try {
-    // Step 1: Transcribe
-    setStatus("Transcribing audio...", "info");
+       setStatus("Transcribing audio...", "info");
     setProgress(0.05);
     const result = await transcribeFile(file);
     const segments = result.segments;
@@ -135,8 +134,7 @@ startBtn.addEventListener("click", async () => {
     saveTranscription(file.name, result);
     setProgress(0.2);
 
-    // Step 2: Generate keywords
-    setStatus("Generating stock footage keywords...", "info");
+       setStatus("Generating stock footage keywords...", "info");
     const footageSegs = buildFootageSegments(segments, duration);
     let rawKeywords = "";
     await generateKeywords(footageSegs, (token) => {
@@ -146,8 +144,7 @@ startBtn.addEventListener("click", async () => {
     });
     setProgress(0.4);
 
-    // Step 3: Search footage
-    setStatus("Searching stock footage...", "info");
+       setStatus("Searching stock footage...", "info");
     const parsed = parseKeywords(rawKeywords);
     if (!parsed.length) {
       setStatus("No segments parsed from keywords.", "err");
@@ -167,8 +164,7 @@ startBtn.addEventListener("click", async () => {
     }
     setProgress(0.55);
 
-    // Step 4: Compile video
-    if (!ffmpegLoaded) {
+       if (!ffmpegLoaded) {
       setStatus("FFmpeg not loaded yet. Please wait and try again.", "err");
       running = false;
       startBtn.disabled = false;
@@ -182,7 +178,7 @@ startBtn.addEventListener("click", async () => {
       const videoEntry = match?.videos?.[0];
       let videoData = null;
       if (videoEntry?.videoUrl) {
-        try { videoData = await downloadVideo(videoEntry.videoUrl); } catch (e) { /* skip */ }
+        try { videoData = await downloadVideo(videoEntry.videoUrl); } catch (e) {  }
       }
       merged.push({ ...footageSegs[i], videoData });
     }
@@ -202,9 +198,15 @@ startBtn.addEventListener("click", async () => {
     });
     const url = URL.createObjectURL(blob);
     outputVideo.src = url;
+    outputVideo.onerror = () => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        outputVideo.src = reader.result;
+      };
+      reader.readAsDataURL(blob);
+    };
     outputVideo.style.display = "block";
-    downloadLink.href = url;
-    downloadLink.style.display = "inline";
+    downloadLink.href = url;    downloadLink.style.display = "inline";
     setProgress(1);
     setStatus("Done!", "ok");
   } catch (err) {

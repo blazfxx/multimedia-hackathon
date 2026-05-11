@@ -23,7 +23,11 @@ if (typeof window === 'undefined') {
     const r = event.request;
     if (r.cache === "only-if-cached" && r.mode !== "same-origin") {
       return;
-    }
+    }
+ if (r.url.startsWith("blob:")) {
+ return;
+ }
+
     const request = (coepCredentialless && r.mode === "no-cors")
       ? new Request(r, { credentials: "omit" })
       : r;
