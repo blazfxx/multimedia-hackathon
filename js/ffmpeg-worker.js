@@ -8,15 +8,18 @@ const MsgType = {
 
 let core = null;
 
+self.postMessage({ type: MsgType.LOG, data: { message: "worker script loaded" } });
+
 self.addEventListener("error", (e) => {
-  self.postMessage({ type: MsgType.ERROR, data: `Worker global error: ${e.message} at ${e.filename}:${e.lineno}` });
+  self.postMessage({ type: MsgType.ERROR, data: `Worker global error: message=${e.message} filename=${e.filename} lineno=${e.lineno} colno=${e.colno}` });
 });
 
 self.addEventListener("unhandledrejection", (e) => {
-  self.postMessage({ type: MsgType.ERROR, data: `Worker unhandled rejection: ${e.reason}` });
+  self.postMessage({ type: MsgType.ERROR, data: `Worker unhandled rejection: reason=${String(e.reason)}` });
 });
 
 self.onmessage = async ({ data: { id, type, data } }) => {
+  self.postMessage({ type: MsgType.LOG, data: { message: `worker received msg type=${type} id=${id}` } });
   const transfer = [];
   let result;
   try {
@@ -25,23 +28,28 @@ self.onmessage = async ({ data: { id, type, data } }) => {
       case MsgType.LOAD:
         result = await (async ({ coreURL, wasmURL, coreText, wasmBinary }) => {
           if (!core) {
+            self.postMessage({ type: MsgType.LOG, data: { message: `eval coreText length=${coreText.length}` } });
             try {
-              eval(coreText);
+              (0, eval)(coreText);
             } catch (e) {
               throw new Error("failed to eval ffmpeg-core.js: " + e.message + "\n" + e.stack);
             }
+            self.postMessage({ type: MsgType.LOG, data: { message: `eval done, typeof createFFmpegCore=${typeof self.createFFmpegCore}` } });
             if (typeof self.createFFmpegCore !== "function") {
-              throw new Error("createFFmpegCore not found after eval");
+              throw new Error("createFFmpegCore not found after eval - typeof=" + typeof self.createFFmpegCore);
             }
           }
           const wasmBinaryBytes = wasmBinary ? new Uint8Array(wasmBinary) : null;
+          self.postMessage({ type: MsgType.LOG, data: { message: `wasmBinaryBytes=${wasmBinaryBytes ? wasmBinaryBytes.byteLength : 0}` } });
           const moduleOpts = {
             mainScriptUrlOrBlob: `${coreURL}#${btoa(JSON.stringify({ wasmURL, workerURL: coreURL.replace(/.js$/g, ".worker.js") }))}`,
           };
           if (wasmBinaryBytes) {
             moduleOpts.wasmBinary = wasmBinaryBytes;
             moduleOpts.instantiateWasm = (imports, callback) => {
+              self.postMessage({ type: MsgType.LOG, data: { message: "instantiateWasm called" } });
               WebAssembly.instantiate(wasmBinaryBytes, imports).then(result => {
+                self.postMessage({ type: MsgType.LOG, data: { message: "instantiateWasm success" } });
                 callback(result.instance);
               }).catch(e => {
                 self.postMessage({ type: MsgType.ERROR, data: `instantiateWasm failed: ${e}` });
@@ -49,11 +57,13 @@ self.onmessage = async ({ data: { id, type, data } }) => {
               return {};
             };
           }
+          self.postMessage({ type: MsgType.LOG, data: { message: "calling createFFmpegCore..." } });
           try {
             core = await self.createFFmpegCore(moduleOpts);
           } catch (e) {
             throw new Error("createFFmpegCore failed: " + e.message + "\n" + e.stack);
           }
+          self.postMessage({ type: MsgType.LOG, data: { message: "createFFmpegCore done" } });
           core.setLogger((msg) => self.postMessage({ type: MsgType.LOG, data: msg }));
           core.setProgress((p) => self.postMessage({ type: MsgType.PROGRESS, data: p }));
           return true;
